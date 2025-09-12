@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36408.4 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AutomationCore", "AutomationCore.csproj", "{68510F0B-A85B-4432-A194-550DE9D3D59F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WgcSmokeTest", "..\WgcSmokeTest\WgcSmokeTest.csproj", "{E0A58644-CD0E-47A8-9F4F-5E795284FE63}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{68510F0B-A85B-4432-A194-550DE9D3D59F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{68510F0B-A85B-4432-A194-550DE9D3D59F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{68510F0B-A85B-4432-A194-550DE9D3D59F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{68510F0B-A85B-4432-A194-550DE9D3D59F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E0A58644-CD0E-47A8-9F4F-5E795284FE63}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E0A58644-CD0E-47A8-9F4F-5E795284FE63}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E0A58644-CD0E-47A8-9F4F-5E795284FE63}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E0A58644-CD0E-47A8-9F4F-5E795284FE63}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {CF24474B-25C8-4846-8F59-FA66391188EE}
+	EndGlobalSection
+EndGlobal
