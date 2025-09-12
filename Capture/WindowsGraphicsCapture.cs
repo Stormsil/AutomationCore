@@ -421,13 +421,28 @@ namespace AutomationCore.Capture
 
         private void CopyTextureData(D3D11.Texture2D source, CaptureFrame frame, Rectangle? roi)
         {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            // Проверяем и подбираем валидный device/context
+            var device = source.Device ?? _d3d11Device
+                ?? throw new InvalidOperationException("D3D11 device is not initialized.");
+            var context = device.ImmediateContext ?? _d3d11Context
+                ?? throw new InvalidOperationException("D3D11 context is not initialized.");
+
+            // Размеры назначения (должны быть > 0)
+            int width = Math.Max(0, frame.Width);
+            int height = Math.Max(0, frame.Height);
+            if (width == 0 || height == 0)
+                throw new InvalidOperationException("Frame size is zero.");
+
+            // Описатель staging-текстуры
             var desc = new D3D11.Texture2DDescription
             {
-                Width = frame.Width,
-                Height = frame.Height,
+                Width = width,
+                Height = height,
                 MipLevels = 1,
                 ArraySize = 1,
-                Format = source.Description.Format,
+                Format = source.Description.Format,               // обычно B8G8R8A8_UNorm
                 SampleDescription = new DXGI.SampleDescription(1, 0),
                 Usage = D3D11.ResourceUsage.Staging,
                 BindFlags = D3D11.BindFlags.None,
@@ -435,42 +450,58 @@ namespace AutomationCore.Capture
                 OptionFlags = D3D11.ResourceOptionFlags.None
             };
 
-            using var staging = new D3D11.Texture2D(_d3d11Device, desc);
+            using var staging = new D3D11.Texture2D(device, desc);
 
-            var sourceRegion = roi.HasValue
-                ? new D3D11.ResourceRegion(roi.Value.X, roi.Value.Y, 0,
-                    roi.Value.X + roi.Value.Width, roi.Value.Y + roi.Value.Height, 1)
-                : new D3D11.ResourceRegion(0, 0, 0, frame.Width, frame.Height, 1);
+            // Источник для копирования: clamp ROI в границы исходной текстуры
+            var srcW = source.Description.Width;
+            var srcH = source.Description.Height;
 
-            _d3d11Context.CopySubresourceRegion(source, 0, sourceRegion, staging, 0);
+            int x0 = 0, y0 = 0, x1 = width, y1 = height;
+            if (roi.HasValue && roi.Value.Width > 0 && roi.Value.Height > 0)
+            {
+                x0 = Math.Clamp(roi.Value.Left, 0, srcW);
+                y0 = Math.Clamp(roi.Value.Top, 0, srcH);
+                x1 = Math.Clamp(roi.Value.Right, 0, srcW);
+                y1 = Math.Clamp(roi.Value.Bottom, 0, srcH);
+                // Если ROI меньше destination — мы уже ограничили frame.Width/Height раньше
+            }
 
-            var box = _d3d11Context.MapSubresource(staging, 0, D3D11.MapMode.Read, D3D11.MapFlags.None);
+            var region = new D3D11.ResourceRegion(x0, y0, 0, x1, y1, 1);
+
+            // Копируем сабресурс
+            context.CopySubresourceRegion(source, 0, region, staging, 0);
+
+            // Чтение staging в системную память
+            var box = context.MapSubresource(staging, 0, D3D11.MapMode.Read, D3D11.MapFlags.None);
             try
             {
-                frame.Data = new byte[frame.Width * frame.Height * 4];
-                frame.Stride = frame.Width * 4;
+                frame.Data = new byte[width * height * 4];
+                frame.Stride = width * 4;
+                int rowBytes = width * 4;
 
                 unsafe
                 {
-                    byte* src = (byte*)box.DataPointer.ToPointer();
-                    fixed (byte* dst = frame.Data)
+                    byte* srcBase = (byte*)box.DataPointer;
+                    fixed (byte* dstBase = frame.Data)
                     {
-                        for (int y = 0; y < frame.Height; y++)
+                        for (int y = 0; y < height; y++)
                         {
+                            // ВАЖНО: копируем ровно rowBytes, а не frame.Stride
                             Buffer.MemoryCopy(
-                                src + y * box.RowPitch,
-                                dst + y * frame.Stride,
-                                frame.Stride,
-                                frame.Stride);
+                                srcBase + y * box.RowPitch,
+                                dstBase + y * frame.Stride,
+                                rowBytes,    // размер доступного буфера на приёмнике
+                                rowBytes);   // сколько реально копируем
                         }
                     }
                 }
             }
             finally
             {
-                _d3d11Context.UnmapSubresource(staging, 0);
+                context.UnmapSubresource(staging, 0);
             }
         }
+
 
         #endregion
 

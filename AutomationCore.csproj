@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 	<SupportedOSPlatformVersion>10.0.18362.0</SupportedOSPlatformVersion>
+	  <UseWPF>true</UseWPF>
 	  <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
