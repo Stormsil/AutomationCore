@@ -1,12 +1,12 @@
 ﻿// ====================================
-// Enhanced WindowsGraphicsCapture
-// Расширенный захват с поддержкой потока, слежения за окнами и различных форматов
+// Enhanced WindowsGraphicsCapture (refactored)
+// Расширенный захват с поддержкой пула буферов, переиспользования staging и стабильных событий
 // ====================================
 
 using OpenCvSharp;
 using System;
 using System.Buffers;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -40,6 +40,9 @@ namespace AutomationCore.Capture
         private D3D11.DeviceContext _d3d11Context;
         private IDirect3DDevice _winrtD3DDevice;
 
+        // Staging для чтения в системную память (переиспользуем!)
+        private D3D11.Texture2D _staging;
+
         // WGC Resources
         private Direct3D11CaptureFramePool _framePool;
         private GraphicsCaptureItem _captureItem;
@@ -52,15 +55,9 @@ namespace AutomationCore.Capture
         private CancellationTokenSource _captureCts;
         private readonly object _lock = new();
 
-        // Stream Capture
-        private readonly ConcurrentQueue<CaptureFrame> _frameQueue = new();
-        private readonly CircularBuffer<CaptureFrame> _frameBuffer;
-        private TaskCompletionSource<CaptureFrame> _singleFrameTcs;
-
         // Window Tracking
         private System.Threading.Timer _windowTracker;
         private Rectangle _lastWindowRect;
-        private bool _autoTrackWindow;
 
         // Performance Metrics
         private readonly CaptureMetrics _metrics = new();
@@ -85,6 +82,12 @@ namespace AutomationCore.Capture
         /// <summary>Событие при ошибке захвата</summary>
         public event EventHandler<CaptureErrorEventArgs> CaptureError;
 
+        private void Raise<T>(EventHandler<T> ev, T args) where T : EventArgs
+            => Volatile.Read(ref ev)?.Invoke(this, args);
+
+        private void Raise(EventHandler ev)
+            => Volatile.Read(ref ev)?.Invoke(this, EventArgs.Empty);
+
         #endregion
 
         #region Constructor & Initialization
@@ -92,7 +95,6 @@ namespace AutomationCore.Capture
         public EnhancedWindowsGraphicsCapture(CaptureSettings settings = null)
         {
             _settings = settings ?? CaptureSettings.Default;
-            _frameBuffer = new CircularBuffer<CaptureFrame>(_settings.BufferSize);
         }
 
         /// <summary>Проверяет поддержку WGC</summary>
@@ -101,8 +103,6 @@ namespace AutomationCore.Capture
             try { return GraphicsCaptureSession.IsSupported(); }
             catch { return false; }
         }
-
-
 
         /// <summary>
         /// Инициализирует захват для окна или монитора
@@ -177,22 +177,44 @@ namespace AutomationCore.Capture
             if (_framePool == null || _captureItem == null)
                 throw new InvalidOperationException("Not initialized. Call InitializeAsync first.");
 
+            TaskCompletionSource<CaptureFrame> localTcs;
             lock (_lock)
             {
-                _singleFrameTcs = new TaskCompletionSource<CaptureFrame>(
+                localTcs = new TaskCompletionSource<CaptureFrame>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
+                // Объединяем одноразовый захват с обработчиком событий
+                void OneShot(object s, object a)
+                {
+                    // no-op; мы используем OnFrameArrived для выдачи кадра
+                }
             }
 
             using var session = _framePool.CreateCaptureSession(_captureItem);
+
+            // Применяем флаги сессии, которые могли быть настроены
+            if (_settings.IsCursorCaptureEnabled is bool c) session.IsCursorCaptureEnabled = c;
+
+
             session.StartCapture();
 
             using var cts = new CancellationTokenSource(_settings.CaptureTimeout);
+            var tcs = new TaskCompletionSource<CaptureFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            EventHandler<FrameCapturedEventArgs> handler = null;
+            handler = (sender, e) =>
+            {
+                tcs.TrySetResult(e.Frame);
+                FrameCaptured -= handler;
+            };
+            FrameCaptured += handler;
+
             try
             {
-                return await _singleFrameTcs.Task.WaitAsync(cts.Token);
+                return await tcs.Task.WaitAsync(cts.Token);
             }
             catch (OperationCanceledException)
             {
+                FrameCaptured -= handler;
                 throw new TimeoutException($"Frame capture timeout ({_settings.CaptureTimeout}ms)");
             }
         }
@@ -227,10 +249,9 @@ namespace AutomationCore.Capture
                 _captureCts = new CancellationTokenSource();
                 _captureSession = _framePool.CreateCaptureSession(_captureItem);
 
-                if (_settings.IsCursorCaptureEnabled != null)
-                {
-                    _captureSession.IsCursorCaptureEnabled = _settings.IsCursorCaptureEnabled.Value;
-                }
+                if (_settings.IsCursorCaptureEnabled is bool c)
+                    _captureSession.IsCursorCaptureEnabled = c;
+
 
                 _captureSession.StartCapture();
                 _isCapturing = true;
@@ -260,15 +281,15 @@ namespace AutomationCore.Capture
             if (!_isCapturing)
                 throw new InvalidOperationException("Capture not started. Call StartCapture first.");
 
-            var tcs = new TaskCompletionSource<CaptureFrame>();
+            var tcs = new TaskCompletionSource<CaptureFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            void Handler(object sender, FrameCapturedEventArgs e)
+            EventHandler<FrameCapturedEventArgs> handler = null;
+            handler = (sender, e) =>
             {
                 tcs.TrySetResult(e.Frame);
-                FrameCaptured -= Handler;
-            }
-
-            FrameCaptured += Handler;
+                FrameCaptured -= handler;
+            };
+            FrameCaptured += handler;
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _captureCts.Token);
             try
@@ -277,22 +298,16 @@ namespace AutomationCore.Capture
             }
             catch (OperationCanceledException)
             {
-                FrameCaptured -= Handler;
+                FrameCaptured -= handler;
                 throw;
             }
         }
 
         /// <summary>Получает последний захваченный кадр (неблокирующий)</summary>
-        public CaptureFrame GetLastFrame()
-        {
-            return _frameBuffer.GetLast();
-        }
+        public CaptureFrame GetLastFrame() => _frameBuffer.GetLast();
 
         /// <summary>Получает N последних кадров из буфера</summary>
-        public CaptureFrame[] GetRecentFrames(int count)
-        {
-            return _frameBuffer.GetRecent(count);
-        }
+        public CaptureFrame[] GetRecentFrames(int count) => _frameBuffer.GetRecent(count);
 
         #endregion
 
@@ -301,7 +316,6 @@ namespace AutomationCore.Capture
         /// <summary>Начинает отслеживание окна</summary>
         private void StartWindowTracking(IntPtr hwnd)
         {
-            _autoTrackWindow = true;
             _windowTracker = new System.Threading.Timer(CheckWindowState, hwnd, 100, 100);
         }
 
@@ -311,7 +325,7 @@ namespace AutomationCore.Capture
 
             if (!IsWindow(hwnd))
             {
-                WindowLost?.Invoke(this, EventArgs.Empty);
+                Raise(WindowLost);
                 StopCapture();
                 _windowTracker?.Dispose();
                 return;
@@ -333,10 +347,14 @@ namespace AutomationCore.Capture
                         _poolSize = new SizeInt32 { Width = rect.Width, Height = rect.Height };
                         _framePool?.Recreate(_winrtD3DDevice, _settings.PixelFormat,
                             _settings.FramePoolSize, _poolSize);
+
+                        // Сбросим staging — он станет неверного размера
+                        _staging?.Dispose();
+                        _staging = null;
                     }
                 }
 
-                WindowChanged?.Invoke(this, new WindowChangedEventArgs
+                Raise(WindowChanged, new WindowChangedEventArgs
                 {
                     OldBounds = oldRect,
                     NewBounds = rect,
@@ -349,6 +367,8 @@ namespace AutomationCore.Capture
 
         #region Frame Processing
 
+        private readonly CircularBuffer<CaptureFrame> _frameBuffer = new(30);
+
         private void OnFrameArrived(Direct3D11CaptureFramePool sender, object args)
         {
             using var frame = sender.TryGetNextFrame();
@@ -356,6 +376,10 @@ namespace AutomationCore.Capture
 
             try
             {
+                // Guard: бывают нулевые размеры при сворачивании/перемещении
+                if (frame.ContentSize.Width <= 0 || frame.ContentSize.Height <= 0)
+                    return;
+
                 // Handle resize
                 if (frame.ContentSize.Width != _poolSize.Width ||
                     frame.ContentSize.Height != _poolSize.Height)
@@ -363,6 +387,10 @@ namespace AutomationCore.Capture
                     _poolSize = frame.ContentSize;
                     sender.Recreate(_winrtD3DDevice, _settings.PixelFormat,
                         _settings.FramePoolSize, _poolSize);
+
+                    // Сброс staging под новый размер
+                    _staging?.Dispose();
+                    _staging = null;
                 }
 
                 // Process frame
@@ -371,22 +399,15 @@ namespace AutomationCore.Capture
                 // Update metrics
                 UpdateMetrics();
 
-                // Add to buffer
+                // Add to buffer (кольцевой буфер владеет кадрами)
                 _frameBuffer.Add(captureFrame);
 
-                // Handle single frame request
-                lock (_lock)
-                {
-                    _singleFrameTcs?.TrySetResult(captureFrame);
-                    _singleFrameTcs = null;
-                }
-
                 // Raise event
-                FrameCaptured?.Invoke(this, new FrameCapturedEventArgs { Frame = captureFrame });
+                Raise(FrameCaptured, new FrameCapturedEventArgs { Frame = captureFrame });
             }
             catch (Exception ex)
             {
-                CaptureError?.Invoke(this, new CaptureErrorEventArgs { Exception = ex });
+                Raise(CaptureError, new CaptureErrorEventArgs { Exception = ex });
             }
         }
 
@@ -413,7 +434,7 @@ namespace AutomationCore.Capture
                 WindowHandle = _windowHandle
             };
 
-            // Copy texture data
+            // Copy texture data into pooled byte[]
             CopyTextureData(texture, captureFrame, roi);
 
             return captureFrame;
@@ -423,34 +444,19 @@ namespace AutomationCore.Capture
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
 
-            // Проверяем и подбираем валидный device/context
             var device = source.Device ?? _d3d11Device
                 ?? throw new InvalidOperationException("D3D11 device is not initialized.");
             var context = device.ImmediateContext ?? _d3d11Context
                 ?? throw new InvalidOperationException("D3D11 context is not initialized.");
 
-            // Размеры назначения (должны быть > 0)
             int width = Math.Max(0, frame.Width);
             int height = Math.Max(0, frame.Height);
             if (width == 0 || height == 0)
                 throw new InvalidOperationException("Frame size is zero.");
 
-            // Описатель staging-текстуры
-            var desc = new D3D11.Texture2DDescription
-            {
-                Width = width,
-                Height = height,
-                MipLevels = 1,
-                ArraySize = 1,
-                Format = source.Description.Format,               // обычно B8G8R8A8_UNorm
-                SampleDescription = new DXGI.SampleDescription(1, 0),
-                Usage = D3D11.ResourceUsage.Staging,
-                BindFlags = D3D11.BindFlags.None,
-                CpuAccessFlags = D3D11.CpuAccessFlags.Read,
-                OptionFlags = D3D11.ResourceOptionFlags.None
-            };
-
-            using var staging = new D3D11.Texture2D(device, desc);
+            // Создаём/переиспользуем staging текстуру нужного размера/формата
+            var fmt = source.Description.Format;
+            var staging = GetOrCreateStaging(device, width, height, fmt);
 
             // Источник для копирования: clamp ROI в границы исходной текстуры
             var srcW = source.Description.Width;
@@ -463,36 +469,35 @@ namespace AutomationCore.Capture
                 y0 = Math.Clamp(roi.Value.Top, 0, srcH);
                 x1 = Math.Clamp(roi.Value.Right, 0, srcW);
                 y1 = Math.Clamp(roi.Value.Bottom, 0, srcH);
-                // Если ROI меньше destination — мы уже ограничили frame.Width/Height раньше
             }
 
             var region = new D3D11.ResourceRegion(x0, y0, 0, x1, y1, 1);
 
-            // Копируем сабресурс
+            // Копируем сабресурс в staging
             context.CopySubresourceRegion(source, 0, region, staging, 0);
 
             // Чтение staging в системную память
             var box = context.MapSubresource(staging, 0, D3D11.MapMode.Read, D3D11.MapFlags.None);
             try
             {
-                frame.Data = new byte[width * height * 4];
+                // Рентуем буфер из пула (Width * Height * 4 BGRA)
+                int byteCount = width * height * 4;
+                frame.RentFromPool(byteCount);
                 frame.Stride = width * 4;
+
                 int rowBytes = width * 4;
 
                 unsafe
                 {
                     byte* srcBase = (byte*)box.DataPointer;
-                    fixed (byte* dstBase = frame.Data)
+                    var dst = frame.Data; // из пула
+
+                    // построчное копирование: учитываем RowPitch staging'a
+                    for (int y = 0; y < height; y++)
                     {
-                        for (int y = 0; y < height; y++)
-                        {
-                            // ВАЖНО: копируем ровно rowBytes, а не frame.Stride
-                            Buffer.MemoryCopy(
-                                srcBase + y * box.RowPitch,
-                                dstBase + y * frame.Stride,
-                                rowBytes,    // размер доступного буфера на приёмнике
-                                rowBytes);   // сколько реально копируем
-                        }
+                        var srcRow = new ReadOnlySpan<byte>(srcBase + y * box.RowPitch, rowBytes);
+                        var dstRow = new Span<byte>(dst, y * frame.Stride, rowBytes);
+                        srcRow.CopyTo(dstRow);
                     }
                 }
             }
@@ -502,6 +507,31 @@ namespace AutomationCore.Capture
             }
         }
 
+        private D3D11.Texture2D GetOrCreateStaging(D3D11.Device device, int w, int h, DXGI.Format fmt)
+        {
+            if (_staging != null)
+            {
+                var d = _staging.Description;
+                if (d.Width == w && d.Height == h && d.Format == fmt)
+                    return _staging;
+            }
+
+            _staging?.Dispose();
+            _staging = new D3D11.Texture2D(device, new D3D11.Texture2DDescription
+            {
+                Width = w,
+                Height = h,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = fmt,
+                SampleDescription = new DXGI.SampleDescription(1, 0),
+                Usage = D3D11.ResourceUsage.Staging,
+                BindFlags = D3D11.BindFlags.None,
+                CpuAccessFlags = D3D11.CpuAccessFlags.Read,
+                OptionFlags = D3D11.ResourceOptionFlags.None
+            });
+            return _staging;
+        }
 
         #endregion
 
@@ -583,24 +613,35 @@ namespace AutomationCore.Capture
 
         public void Dispose()
         {
-            StopCapture();
-
-            _windowTracker?.Dispose();
-
-            if (_framePool != null)
+            try
             {
-                _framePool.FrameArrived -= OnFrameArrived;
-                _framePool.Dispose();
-                _framePool = null;
+                StopCapture();
+
+                _windowTracker?.Dispose();
+
+                if (_framePool != null)
+                {
+                    _framePool.FrameArrived -= OnFrameArrived;
+                    _framePool.Dispose();
+                    _framePool = null;
+                }
+
+                _captureSession?.Dispose();
+                _captureSession = null;
+
+                _captureItem = null;
+                _winrtD3DDevice = null;
+
+                _staging?.Dispose();
+                _staging = null;
+
+                _d3d11Context?.Dispose();
+                _d3d11Device?.Dispose();
             }
-
-            _captureItem = null;
-            _winrtD3DDevice = null;
-
-            _d3d11Context?.Dispose();
-            _d3d11Device?.Dispose();
-
-            _frameBuffer?.Dispose();
+            catch
+            {
+                // ignore on dispose-path
+            }
         }
 
         #endregion
@@ -685,7 +726,6 @@ namespace AutomationCore.Capture
     {
         public DirectXPixelFormat PixelFormat { get; set; } = DirectXPixelFormat.B8G8R8A8UIntNormalized;
         public int FramePoolSize { get; set; } = 2;
-        public int BufferSize { get; set; } = 30;
         public int TargetFps { get; set; } = 60;
         public int CaptureTimeout { get; set; } = 5000;
         public bool AutoTrackWindow { get; set; } = true;
@@ -699,16 +739,21 @@ namespace AutomationCore.Capture
         public static CaptureSettings HighPerformance => new()
         {
             FramePoolSize = 3,
-            BufferSize = 60,
             TargetFps = 144,
             UseHardwareAcceleration = true
+        };
+
+        public static CaptureSettings LowLatency => new()
+        {
+            FramePoolSize = 1,
+            TargetFps = 30,
+            CaptureTimeout = 1000
         };
 
         public CaptureSettings Clone() => new CaptureSettings
         {
             PixelFormat = this.PixelFormat,
             FramePoolSize = this.FramePoolSize,
-            BufferSize = this.BufferSize,
             TargetFps = this.TargetFps,
             CaptureTimeout = this.CaptureTimeout,
             AutoTrackWindow = this.AutoTrackWindow,
@@ -717,47 +762,39 @@ namespace AutomationCore.Capture
             IsBorderRequired = this.IsBorderRequired,
             RegionOfInterest = this.RegionOfInterest
         };
-
-        public static CaptureSettings LowLatency => new()
-        {
-            FramePoolSize = 1,
-            BufferSize = 5,
-            TargetFps = 30,
-            CaptureTimeout = 1000
-        };
     }
 
-    /// <summary>Кадр захвата</summary>
+    /// <summary>Кадр захвата (буфер арендован из ArrayPool, возвращается в Dispose)</summary>
     public class CaptureFrame : IDisposable
     {
+        private static readonly ArrayPool<byte> _pool = ArrayPool<byte>.Shared;
+
         public DateTime Timestamp { get; set; }
         public int Width { get; set; }
         public int Height { get; set; }
         public int Stride { get; set; }
-        public byte[] Data { get; set; }
+        public byte[] Data { get; private set; }
         public long FrameNumber { get; set; }
         public IntPtr WindowHandle { get; set; }
 
-        /// <summary>Конвертирует в Bitmap</summary>
-        private static Mat BitmapToMat(Bitmap bitmap)
-        {
-            var rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
-            var bmpData = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
-            try
-            {
-                using var view = Mat.FromPixelData(bitmap.Height, bitmap.Width, MatType.CV_8UC3, bmpData.Scan0, bmpData.Stride);
-                return view.Clone(); // чтобы данные жили после UnlockBits
-            }
-            finally
-            {
-                bitmap.UnlockBits(bmpData);
-            }
-        }
+        private int _rentedSize;
 
+        internal void RentFromPool(int size)
+        {
+            // если уже есть буфер достаточного размера — вернём старый и возьмём новый (упрощение)
+            if (Data != null)
+            {
+                _pool.Return(Data);
+                Data = null;
+                _rentedSize = 0;
+            }
+            Data = _pool.Rent(size);
+            _rentedSize = size;
+        }
 
         public Bitmap ToBitmap()
         {
-            if (Data == null || Data.Length == 0)
+            if (Data == null || _rentedSize == 0)
                 throw new InvalidOperationException("Frame has no data");
 
             var bmp = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
@@ -794,7 +831,6 @@ namespace AutomationCore.Capture
             return bmp;
         }
 
-
         /// <summary>Конвертирует в byte array с указанным форматом</summary>
         public byte[] ToByteArray(ImageFormat format)
         {
@@ -807,13 +843,16 @@ namespace AutomationCore.Capture
         /// <summary>Получает OpenCV-совместимый массив BGR</summary>
         public byte[] ToBgrArray()
         {
+            if (Data == null || _rentedSize == 0)
+                throw new InvalidOperationException("Frame has no data");
+
             var bgr = new byte[Width * Height * 3];
             var srcIndex = 0;
             var dstIndex = 0;
 
             for (int i = 0; i < Width * Height; i++)
             {
-                bgr[dstIndex++] = Data[srcIndex]; // B
+                bgr[dstIndex++] = Data[srcIndex];     // B
                 bgr[dstIndex++] = Data[srcIndex + 1]; // G
                 bgr[dstIndex++] = Data[srcIndex + 2]; // R
                 srcIndex += 4; // Skip A
@@ -822,24 +861,34 @@ namespace AutomationCore.Capture
             return bgr;
         }
 
-        /// <summary>Клонирует кадр</summary>
+        /// <summary>Клонирует кадр (новый буфер)</summary>
         public CaptureFrame Clone()
         {
-            return new CaptureFrame
+            var clone = new CaptureFrame
             {
                 Timestamp = Timestamp,
                 Width = Width,
                 Height = Height,
                 Stride = Stride,
-                Data = (byte[])Data?.Clone(),
                 FrameNumber = FrameNumber,
                 WindowHandle = WindowHandle
             };
+            if (Data != null && _rentedSize > 0)
+            {
+                clone.RentFromPool(_rentedSize);
+                Buffer.BlockCopy(Data, 0, clone.Data, 0, _rentedSize);
+            }
+            return clone;
         }
 
         public void Dispose()
         {
-            Data = null;
+            if (Data != null)
+            {
+                _pool.Return(Data);
+                Data = null;
+                _rentedSize = 0;
+            }
         }
     }
 
@@ -856,10 +905,7 @@ namespace AutomationCore.Capture
         private double _fpsSum;
         private int _fpsCount;
 
-        public CaptureMetrics()
-        {
-            Reset();
-        }
+        public CaptureMetrics() => Reset();
 
         public void Reset()
         {
@@ -879,19 +925,16 @@ namespace AutomationCore.Capture
             AverageFps = _fpsSum / _fpsCount;
         }
 
-        public CaptureMetrics Clone()
+        public CaptureMetrics Clone() => new CaptureMetrics
         {
-            return new CaptureMetrics
-            {
-                TotalFrames = TotalFrames,
-                DroppedFrames = DroppedFrames,
-                CurrentFps = CurrentFps,
-                AverageFps = AverageFps,
-                StartTime = StartTime,
-                _fpsSum = _fpsSum,
-                _fpsCount = _fpsCount
-            };
-        }
+            TotalFrames = TotalFrames,
+            DroppedFrames = DroppedFrames,
+            CurrentFps = CurrentFps,
+            AverageFps = AverageFps,
+            StartTime = StartTime,
+            _fpsSum = _fpsSum,
+            _fpsCount = _fpsCount
+        };
     }
 
     /// <summary>Кольцевой буфер для кадров</summary>
@@ -904,6 +947,7 @@ namespace AutomationCore.Capture
 
         public CircularBuffer(int capacity)
         {
+            if (capacity <= 0) capacity = 1;
             _buffer = new T[capacity];
         }
 

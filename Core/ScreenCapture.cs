@@ -1,9 +1,11 @@
 ﻿// ====================================
-// Enhanced ScreenCapture
-// Высокоуровневая обертка для удобной работы с захватом экрана
+// Enhanced ScreenCapture (refactored)
+// Высокоуровневая обертка для WGC + OpenCV с кэшем препроцессинга,
+// локальным ROI-поиском и минимизацией копирований памяти.
 // ====================================
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -14,15 +16,13 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using AutomationCore.Assets;
 using AutomationCore.Capture;
 using OpenCvSharp;
-using SDPoint = System.Drawing.Point;
 using CvPoint = OpenCvSharp.Point;
-using AutomationCore.Assets;
-using CvSize = OpenCvSharp.Size;   // <— добавили
 using CvRect = OpenCvSharp.Rect;
-
-
+using CvSize = OpenCvSharp.Size;
+using SDPoint = System.Drawing.Point;
 
 namespace AutomationCore.Core
 {
@@ -31,12 +31,25 @@ namespace AutomationCore.Core
     /// </summary>
     public class EnhancedScreenCapture : IDisposable
     {
+        // ===== Public result type (единый) =====
+        public sealed record MatchResult(Rect Bounds,
+                                         SDPoint Center,
+                                         double Score,
+                                         double Scale,
+                                         bool IsHardPass);
+
         private readonly Dictionary<IntPtr, EnhancedWindowsGraphicsCapture> _captureInstances = new();
         private readonly object _lock = new();
-        private readonly ITemplateStore _templates;
 
+        private readonly ITemplateStore _templates;
         private CaptureSettings _defaultSettings;
         private readonly TemplateMatchOptions _defaultMatchOptions;
+
+        // Кэш препроцессинга шаблонов (после Gray/Blur/Canny, до масштабирования)
+        private readonly TemplatePreprocessCache _prepCache = new();
+
+        // Последние удачные координаты по ключу (для локального ROI)
+        private readonly ConcurrentDictionary<string, SDPoint> _lastHits = new();
 
         public EnhancedScreenCapture(
             CaptureSettings defaultSettings = null,
@@ -48,190 +61,7 @@ namespace AutomationCore.Core
             _defaultMatchOptions = defaultMatchOptions ?? TemplatePresets.Universal;
         }
 
-        #region Window Management
-
-        // === Добавь внутрь класса EnhancedScreenCapture ===
-
-        // Результат матчинга: прямоугольник, центр, score и флаг «жёсткий проход по порогу»
-        public sealed record MatchResult(System.Drawing.Rectangle Bounds,
-                                         System.Drawing.Point Center,
-                                         double Score,
-                                         bool IsHardPass);
-
-        private MatchResult? FindBestOnMat(Mat screenBgr, Mat templBgr, TemplateMatchOptions o)
-        {
-            if (screenBgr.Empty() || templBgr.Empty())
-                return null;
-
-            // --- ROI ---
-            Mat view = screenBgr;
-            var roiOffset = new SDPoint(0, 0);
-            if (o.Roi is CvRect r && r.Width > 0 && r.Height > 0)
-            {
-                int x = Math.Clamp(r.X, 0, screenBgr.Cols - 1);
-                int y = Math.Clamp(r.Y, 0, screenBgr.Rows - 1);
-                int w = Math.Clamp(r.Width, 1, screenBgr.Cols - x);
-                int h = Math.Clamp(r.Height, 1, screenBgr.Rows - y);
-                var clamp = new CvRect(x, y, w, h);
-                view = new Mat(screenBgr, clamp);
-                roiOffset = new SDPoint(clamp.X, clamp.Y);
-            }
-
-            // --- Предобработка ---
-            static Mat Prep(Mat src, bool gray, CvSize? blur, bool canny)
-            {
-                Mat cur = src, tmp;
-                if (gray)
-                {
-                    tmp = new Mat();
-                    Cv2.CvtColor(cur, tmp, ColorConversionCodes.BGR2GRAY);
-                    cur = tmp;
-                }
-                if (blur is CvSize k && (k.Width > 1 || k.Height > 1))
-                {
-                    tmp = new Mat();
-                    Cv2.GaussianBlur(cur, tmp, k, 0);
-                    if (!ReferenceEquals(cur, src)) cur.Dispose();
-                    cur = tmp;
-                }
-                if (canny)
-                {
-                    tmp = new Mat();
-                    Cv2.Canny(cur, tmp, 80, 160);
-                    if (!ReferenceEquals(cur, src)) cur.Dispose();
-                    cur = tmp;
-                }
-                return cur;
-            }
-
-            using var viewP = Prep(view, o.UseGray, o.Blur, o.UseCanny);
-            using var templP = Prep(templBgr, o.UseGray, o.Blur, o.UseCanny);
-
-            if (templP.Cols > viewP.Cols || templP.Rows > viewP.Rows)
-                return null;
-
-            // --- Поиск лучшего совпадения (масштаб) ---
-            double bestScore = o.HigherIsBetter ? double.NegativeInfinity : double.PositiveInfinity;
-            OpenCvSharp.Point bestLoc = default;
-            double bestScale = 1.0;
-
-            double start = o.ScaleMin, end = o.ScaleMax, step = o.ScaleStep <= 0 ? 0.01 : o.ScaleStep;
-            if (start > end) (start, end) = (end, start);
-
-            for (double s = start; s <= end + 1e-9; s += step)
-            {
-                using var scaled = (Math.Abs(s - 1.0) < 1e-9)
-                    ? templP.Clone()
-                    : templP.Resize(new OpenCvSharp.Size(
-                        Math.Max(1, (int)(templP.Cols * s)),
-                        Math.Max(1, (int)(templP.Rows * s))),
-                        0, 0, InterpolationFlags.Linear);
-
-                if (scaled.Cols > viewP.Cols || scaled.Rows > viewP.Rows)
-                    continue;
-
-                using var result = new Mat();
-                Cv2.MatchTemplate(viewP, scaled, result, o.Mode, mask: o.Mask);
-                Cv2.MinMaxLoc(result, out var minVal, out var maxVal, out var minLoc, out var maxLoc);
-
-                double score = o.HigherIsBetter ? maxVal : minVal;
-                bool better = o.HigherIsBetter ? score > bestScore : score < bestScore;
-
-                if (better)
-                {
-                    bestScore = score;
-                    bestLoc = o.HigherIsBetter ? maxLoc : minLoc;
-                    bestScale = s;
-                }
-            }
-
-            if (double.IsInfinity(bestScore))
-                return null;
-
-            // --- Порог ---
-            bool isHardPass = o.HigherIsBetter ? (bestScore >= o.Threshold)
-                                               : (bestScore <= (1.0 - o.Threshold));
-
-            // --- Геометрия ---
-            int wT = (int)Math.Round(templBgr.Width * bestScale);
-            int hT = (int)Math.Round(templBgr.Height * bestScale);
-            int x0 = roiOffset.X + bestLoc.X;
-            int y0 = roiOffset.Y + bestLoc.Y;
-
-            var rect = new System.Drawing.Rectangle(x0, y0, wT, hT);
-            var center = new System.Drawing.Point(x0 + wT / 2, y0 + hT / 2);
-
-            return new MatchResult(rect, center, bestScore, isHardPass);
-        }
-
-        public async Task<MatchResult?> FindBestMatchByKeyAsync(
-            string key, TemplateMatchOptions? opt = null, bool allowNear = true)
-        {
-            var o = opt ?? _defaultMatchOptions;
-            using var screenBgr = await CaptureMatAsync(IntPtr.Zero);
-            using var templBgr = _templates.GetTemplate(key);
-
-            var res = FindBestOnMat(screenBgr, templBgr, o);
-            if (res is null) return null;
-            if (!allowNear && !res.IsHardPass) return null;
-            return res;
-        }
-
-        public async Task<MatchResult?> WaitForBestMatchByKeyAsync(
-            string key, int timeoutMs = 10000, int checkIntervalMs = 150,
-            TemplateMatchOptions? opt = null, bool allowNear = true)
-        {
-            var o = opt ?? _defaultMatchOptions;
-            var end = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-
-            var session = await StartScreenCaptureAsync();
-            using var templ = _templates.GetTemplate(key);
-
-            try
-            {
-                int hits = 0;
-                MatchResult? last = null;
-
-                while (DateTime.UtcNow < end)
-                {
-                    var frame = await session.GetNextFrameAsync();
-                    using var screen = ConvertToMat(frame);
-
-                    var res = FindBestOnMat(screen, templ, o);
-
-                    bool pass = res is not null && (allowNear || res.IsHardPass);
-                    if (pass)
-                    {
-                        if (last is not null &&
-                            Math.Abs(last.Center.X - res!.Center.X) < 2 &&
-                            Math.Abs(last.Center.Y - res!.Center.Y) < 2)
-                            hits++;
-                        else
-                            hits = 1;
-
-                        last = res;
-
-                        if (hits >= Math.Max(1, o.ConsecutiveHits))
-                            return res;
-                    }
-                    else
-                    {
-                        hits = 0;
-                        last = null;
-                    }
-
-                    await Task.Delay(checkIntervalMs);
-                }
-                return null;
-            }
-            finally
-            {
-                session.Stop();
-            }
-        }
-
-
-
+        #region ---------- Window Management & Info ----------
 
         /// <summary>Находит все окна по части заголовка</summary>
         public WindowInfo[] FindWindows(string titlePattern, bool exactMatch = false)
@@ -252,11 +82,7 @@ namespace AutomationCore.Core
                     ? normalizedTitle.Equals(pattern, StringComparison.OrdinalIgnoreCase)
                     : normalizedTitle.Contains(pattern);
 
-                if (matches)
-                {
-                    windows.Add(info);
-                }
-
+                if (matches) windows.Add(info);
                 return true;
             }, IntPtr.Zero);
 
@@ -265,8 +91,7 @@ namespace AutomationCore.Core
 
         public Rect ToScreenRoi(IntPtr hwnd, Rect relativeRoi)
         {
-            var wi = GetWindowInfo(hwnd);
-            if (wi == null) throw new InvalidOperationException("Window not found");
+            var wi = GetWindowInfo(hwnd) ?? throw new InvalidOperationException("Window not found");
             return new Rect(
                 wi.Bounds.X + relativeRoi.X,
                 wi.Bounds.Y + relativeRoi.Y,
@@ -274,272 +99,6 @@ namespace AutomationCore.Core
                 relativeRoi.Height
             );
         }
-
-        public struct TemplateMatch
-        {
-            public Rect Bounds;                  // в координатах экрана
-            public System.Drawing.Point Center;  // центр в координатах экрана
-            public double Score;                 // метрика совпадения
-            public double Scale;                 // масштаб шаблона
-        }
-
-        public async Task<IReadOnlyList<TemplateMatch>> FindAllMatchesByKeyAsync(
-            string key, int maxResults = 5, double nmsOverlap = 0.3, TemplateMatchOptions? opt = null)
-        {
-            var o = opt ?? _defaultMatchOptions;
-            using var screenBgr = await CaptureMatAsync(IntPtr.Zero);
-            using var templBgr = _templates.GetTemplate(key);
-            return FindAllMatches_Internal(screenBgr, templBgr, o, maxResults, nmsOverlap);
-        }
-
-        private IReadOnlyList<TemplateMatch> FindAllMatches_Internal(
-    Mat screenBgr, Mat templBgr, TemplateMatchOptions o, int maxResults, double nmsOverlap)
-        {
-            var results = new List<TemplateMatch>();
-
-            // 1) Подготовка вида и шаблона (ROI, gray/blur/canny) — как у тебя в _Internal
-            var pt = FindImageOnScreenByKeyAsync_Internal; // переиспользуем твой препроцесс
-                                                           // но нам нужен сам result Mat; сделаем локально:
-
-            // ROI и предобработка:
-            Mat view = screenBgr;
-            var roiOffset = new SDPoint(0, 0);
-            if (o.Roi is CvRect r && r.Width > 0 && r.Height > 0)
-            {
-                int x = Math.Clamp(r.X, 0, screenBgr.Cols - 1);
-                int y = Math.Clamp(r.Y, 0, screenBgr.Rows - 1);
-                int roiW = Math.Clamp(r.Width, 1, screenBgr.Cols - x);
-                int roiH = Math.Clamp(r.Height, 1, screenBgr.Rows - y);
-                var clamp = new CvRect(x, y, roiW, roiH);
-                view = new Mat(screenBgr, clamp);
-                roiOffset = new SDPoint(clamp.X, clamp.Y);
-            }
-
-            Mat Prep(Mat src, bool gray, CvSize? blur, bool canny)
-            {
-                Mat cur = src, tmp;
-                if (gray) { tmp = new Mat(); Cv2.CvtColor(cur, tmp, ColorConversionCodes.BGR2GRAY); cur = tmp; }
-                if (blur is CvSize k && (k.Width > 1 || k.Height > 1)) { tmp = new Mat(); Cv2.GaussianBlur(cur, tmp, k, 0); cur = tmp; }
-                if (canny) { tmp = new Mat(); Cv2.Canny(cur, tmp, 80, 160); cur = tmp; }
-                return cur;
-            }
-            using var viewP = Prep(view, o.UseGray, o.Blur, o.UseCanny);
-            using var templP = Prep(templBgr, o.UseGray, o.Blur, o.UseCanny);
-
-            // 2) Один масштаб (практически всегда хватает для одинаковых элементов)
-            // если нужно — можно обойти диапазон масштабов, как в твоём методе.
-            using var result = new Mat();
-            Cv2.MatchTemplate(viewP, templP, result, o.Mode, mask: o.Mask);
-
-            // 3) Итеративно берём лучший пик и «зануляем» его окрестность (NMS)
-            using var work = result.Clone();
-            int tW = templP.Width, tH = templP.Height;
-            for (int i = 0; i < maxResults; i++)
-            {
-                Cv2.MinMaxLoc(work, out var minVal, out var maxVal, out var minLoc, out var maxLoc);
-                double score = o.HigherIsBetter ? maxVal : minVal;
-                var loc = o.HigherIsBetter ? maxLoc : minLoc;
-
-                // порог
-                bool pass = o.HigherIsBetter ? (score >= o.Threshold) : (score <= (1.0 - o.Threshold));
-                if (!pass) break;
-
-                // абсолютные координаты на экране
-                var bounds = new Rect(roiOffset.X + loc.X, roiOffset.Y + loc.Y, tW, tH);
-                var center = new SDPoint(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
-                results.Add(new TemplateMatch { Bounds = bounds, Center = center, Score = score, Scale = 1.0 });
-
-                // подавление перекрытий
-                int supW = (int)(tW * (1.0 + nmsOverlap));
-                int supH = (int)(tH * (1.0 + nmsOverlap));
-                var sup = new CvRect(Math.Max(0, loc.X - (supW - tW) / 2),
-                                     Math.Max(0, loc.Y - (supH - tH) / 2),
-                                     Math.Min(supW, work.Cols - Math.Max(0, loc.X - (supW - tW) / 2)),
-                                     Math.Min(supH, work.Rows - Math.Max(0, loc.Y - (supH - tH) / 2)));
-                // заполняем «плохим» значением, чтобы не ловить соседний пик
-                work[sup].SetTo(o.HigherIsBetter ? 0 : 1);
-            }
-            return results;
-        }
-
-
-        // внутри класса EnhancedScreenCapture
-        private System.Drawing.Point? FindImageOnScreenByKeyAsync_Internal(
-            Mat screenBgr, Mat templBgr, TemplateMatchOptions o)
-        {
-            if (screenBgr.Empty() || templBgr.Empty())
-                return null;
-
-            // ROI
-            Mat view = screenBgr;
-            var roiOffset = new SDPoint(0, 0);
-            if (o.Roi is CvRect r && r.Width > 0 && r.Height > 0)
-            {
-                int x = Math.Clamp(r.X, 0, screenBgr.Cols - 1);
-                int y = Math.Clamp(r.Y, 0, screenBgr.Rows - 1);
-                int roiW = Math.Clamp(r.Width, 1, screenBgr.Cols - x);
-                int roiH = Math.Clamp(r.Height, 1, screenBgr.Rows - y);
-                var clamp = new CvRect(x, y, roiW, roiH);
-
-                view = new Mat(screenBgr, clamp);
-                roiOffset = new SDPoint(clamp.X, clamp.Y);
-            }
-
-            // Предобработка
-            static Mat Prep(Mat src, bool gray, CvSize? blur, bool canny)
-            {
-                Mat cur = src, tmp;
-                if (gray)
-                {
-                    tmp = new Mat();
-                    Cv2.CvtColor(cur, tmp, ColorConversionCodes.BGR2GRAY);
-                    cur = tmp;
-                }
-                if (blur is CvSize k && (k.Width > 1 || k.Height > 1))
-                {
-                    tmp = new Mat();
-                    Cv2.GaussianBlur(cur, tmp, k, 0);
-                    if (!ReferenceEquals(cur, src)) cur.Dispose();
-                    cur = tmp;
-                }
-                if (canny)
-                {
-                    tmp = new Mat();
-                    Cv2.Canny(cur, tmp, 80, 160);
-                    if (!ReferenceEquals(cur, src)) cur.Dispose();
-                    cur = tmp;
-                }
-                return cur;
-            }
-
-            using var viewP = Prep(view, o.UseGray, o.Blur, o.UseCanny);
-            using var templP = Prep(templBgr, o.UseGray, o.Blur, o.UseCanny);
-
-            if (templP.Cols > viewP.Cols || templP.Rows > viewP.Rows)
-                return null;
-
-            // Поиск по масштабу
-            double bestScore = o.HigherIsBetter ? double.NegativeInfinity : double.PositiveInfinity;
-            OpenCvSharp.Point bestLoc = default;
-            double bestScale = 1.0;
-
-            double start = o.ScaleMin, end = o.ScaleMax, step = o.ScaleStep <= 0 ? 0.01 : o.ScaleStep;
-            if (start > end) (start, end) = (end, start);
-
-            for (double s = start; s <= end + 1e-9; s += step)
-            {
-                using var scaled = (Math.Abs(s - 1.0) < 1e-9)
-                    ? templP.Clone()
-                    : templP.Resize(new OpenCvSharp.Size(
-                        Math.Max(1, (int)(templP.Cols * s)),
-                        Math.Max(1, (int)(templP.Rows * s))),
-                        0, 0, InterpolationFlags.Linear);
-
-                if (scaled.Cols > viewP.Cols || scaled.Rows > viewP.Rows)
-                    continue;
-
-                using var result = new Mat();
-                Cv2.MatchTemplate(viewP, scaled, result, o.Mode, mask: o.Mask);
-                Cv2.MinMaxLoc(result, out var minVal, out var maxVal, out var minLoc, out var maxLoc);
-
-                double score = o.HigherIsBetter ? maxVal : minVal;
-                bool better = o.HigherIsBetter ? score > bestScore : score < bestScore;
-
-                if (better)
-                {
-                    bestScore = score;
-                    bestLoc = o.HigherIsBetter ? maxLoc : minLoc;
-                    bestScale = s;
-                }
-            }
-
-            if (double.IsInfinity(bestScore))
-                return null;
-
-            // Порог
-            if (o.HigherIsBetter)
-            {
-                if (bestScore < o.Threshold) return null;
-            }
-            else
-            {
-                // для SQDIFF — чем меньше, тем лучше; используем (1 - Threshold) как порог «плохости»
-                if (bestScore > (1.0 - o.Threshold)) return null;
-            }
-
-            int matchW = (int)Math.Round(templBgr.Width * bestScale);
-            int matchH = (int)Math.Round(templBgr.Height * bestScale);
-
-            return new SDPoint(
-                roiOffset.X + bestLoc.X + matchW / 2,
-                roiOffset.Y + bestLoc.Y + matchH / 2
-            );
-
-        }
-
-
-        public async Task<System.Drawing.Point?> FindImageOnScreenByKeyAsync(
-    string key, TemplateMatchOptions? opt = null)
-        {
-            var o = opt ?? _defaultMatchOptions;
-
-            using var screenBgr = await CaptureMatAsync(IntPtr.Zero);
-            using var templBgr = _templates.GetTemplate(key);
-
-            return FindImageOnScreenByKeyAsync_Internal(screenBgr, templBgr, o);
-        }
-
-
-
-        public async Task<System.Drawing.Point?> WaitForImageByKeyAsync(
-      string key, int timeoutMs = 10000, int checkIntervalMs = 150, TemplateMatchOptions? opt = null)
-        {
-            var o = opt ?? _defaultMatchOptions;
-            var end = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-
-            // держим одну сессию
-            var session = await StartScreenCaptureAsync();
-            using var templ = _templates.GetTemplate(key);
-
-            try
-            {
-                int hits = 0;
-                System.Drawing.Point? last = null;
-
-                while (DateTime.UtcNow < end)
-                {
-                    var frame = await session.GetNextFrameAsync();
-                    using var screen = ConvertToMat(frame);
-
-                    var pt = FindImageOnScreenByKeyAsync_Internal(screen, templ, o);
-                    if (pt.HasValue)
-                    {
-                        if (last.HasValue && Math.Abs(last.Value.X - pt.Value.X) < 2 && Math.Abs(last.Value.Y - pt.Value.Y) < 2)
-                            hits++;
-                        else hits = 1;
-
-                        last = pt;
-                        if (hits >= Math.Max(1, o.ConsecutiveHits)) return pt;
-                    }
-                    else { hits = 0; last = null; }
-
-                    await Task.Delay(checkIntervalMs);
-                }
-                return null;
-            }
-            finally { session.Stop(); }
-        }
-
-
-        // ---- Back-compat overloads (чтобы старые вызовы с threshold компилировались) ----
-        public Task<System.Drawing.Point?> FindImageOnScreenByKeyAsync(string key, double threshold) =>
-            FindImageOnScreenByKeyAsync(key, _defaultMatchOptions with { Threshold = threshold });
-
-        public Task<System.Drawing.Point?> WaitForImageByKeyAsync(
-            string key, int timeoutMs, double threshold, int checkIntervalMs = 150) =>
-            WaitForImageByKeyAsync(key, timeoutMs, checkIntervalMs, _defaultMatchOptions with { Threshold = threshold });
-
-
 
         /// <summary>Получает информацию об окне</summary>
         public WindowInfo GetWindowInfo(IntPtr hwnd)
@@ -582,7 +141,7 @@ namespace AutomationCore.Core
                 var process = System.Diagnostics.Process.GetProcessById(info.ProcessId);
                 info.ProcessName = process.ProcessName;
             }
-            catch { }
+            catch { /* ignore */ }
 
             return info;
         }
@@ -598,9 +157,7 @@ namespace AutomationCore.Core
                 {
                     var info = GetWindowInfo(hwnd);
                     if (info != null && !string.IsNullOrWhiteSpace(info.Title))
-                    {
                         windows.Add(info);
-                    }
                 }
                 return true;
             }, IntPtr.Zero);
@@ -610,7 +167,7 @@ namespace AutomationCore.Core
 
         #endregion
 
-        #region Single Frame Capture
+        #region ---------- Single Frame Capture ----------
 
         /// <summary>Захватывает окно по заголовку</summary>
         public async Task<Bitmap> CaptureWindowAsync(string windowTitle)
@@ -664,7 +221,7 @@ namespace AutomationCore.Core
 
         #endregion
 
-        #region Stream Capture
+        #region ---------- Stream Capture ----------
 
         /// <summary>Начинает потоковый захват окна</summary>
         public async Task<CaptureSession> StartCaptureSessionAsync(IntPtr hwnd, CaptureSettings settings = null)
@@ -672,14 +229,10 @@ namespace AutomationCore.Core
             var capture = new EnhancedWindowsGraphicsCapture(settings ?? _defaultSettings);
             await capture.InitializeAsync(hwnd);
 
-            lock (_lock)
-            {
-                _captureInstances[hwnd] = capture;
-            }
+            lock (_lock) { _captureInstances[hwnd] = capture; }
 
             var session = new CaptureSession(capture, hwnd);
             capture.StartCapture();
-
             return session;
         }
 
@@ -689,19 +242,15 @@ namespace AutomationCore.Core
             var capture = new EnhancedWindowsGraphicsCapture(settings ?? _defaultSettings);
             await capture.InitializeAsync(IntPtr.Zero, monitorIndex);
 
-            var handle = IntPtr.Zero; // Use IntPtr.Zero as key for screen capture
-            lock (_lock)
-            {
-                _captureInstances[handle] = capture;
-            }
+            var handle = IntPtr.Zero; // ключ для всего экрана
+            lock (_lock) { _captureInstances[handle] = capture; }
 
             var session = new CaptureSession(capture, handle);
             capture.StartCapture();
-
             return session;
         }
 
-        /// <summary>Останавливает захват</summary>
+        /// <summary>Останавливает захват по hwnd</summary>
         public void StopCapture(IntPtr hwnd)
         {
             lock (_lock)
@@ -731,9 +280,11 @@ namespace AutomationCore.Core
 
         #endregion
 
-        #region OpenCV Integration
+        #region ---------- OpenCV Integration ----------
 
-        /// <summary>Захватывает кадр как OpenCV Mat</summary>
+        /// <summary>
+        /// Захватывает кадр как OpenCV Mat (BGR 8UC3) с минимальными копиями.
+        /// </summary>
         public async Task<Mat> CaptureMatAsync(IntPtr hwnd)
         {
             using var capture = new EnhancedWindowsGraphicsCapture(_defaultSettings);
@@ -742,77 +293,322 @@ namespace AutomationCore.Core
             return ConvertToMat(frame);
         }
 
-        /// <summary>Конвертирует CaptureFrame в OpenCV Mat</summary>
+        /// <summary>
+        /// Конвертирует CaptureFrame (BGRA byte[]) в OpenCV Mat (BGR 8UC3).
+        /// Используем Mat.FromPixelData вместо устаревшего конструктора.
+        /// </summary>
         public static Mat ConvertToMat(CaptureFrame frame)
         {
-            var bgra = new Mat(frame.Height, frame.Width, MatType.CV_8UC4);
-            Marshal.Copy(frame.Data, 0, bgra.Data, frame.Data.Length);
+            if (frame == null || frame.Data == null)
+                throw new ArgumentNullException(nameof(frame));
 
             var bgr = new Mat();
-            Cv2.CvtColor(bgra, bgr, ColorConversionCodes.BGRA2BGR);
-            bgra.Dispose();
+            GCHandle handle = default;
+            try
+            {
+                handle = GCHandle.Alloc(frame.Data, GCHandleType.Pinned);
+                var ptr = handle.AddrOfPinnedObject();
+
+                using var bgraView = Mat.FromPixelData(frame.Height, frame.Width, MatType.CV_8UC4, ptr, frame.Stride);
+                Cv2.CvtColor(bgraView, bgr, ColorConversionCodes.BGRA2BGR);
+            }
+            finally
+            {
+                if (handle.IsAllocated) handle.Free();
+            }
+
             return bgr;
         }
 
+        #endregion
 
-        /// <summary>Находит изображение на экране</summary>
-        public async Task<System.Drawing.Point?> FindImageOnScreenAsync(string templatePath, double threshold = 0.8)
+        #region ---------- Template Matching (best / wait / all) ----------
+
+        /// <summary>
+        /// Базовый матчинг: ищет лучший матч на матрице экрана по предобработанному шаблону.
+        /// </summary>
+        private MatchResult? FindBestOnMat(Mat screenBgr, Mat templBgr, TemplateMatchOptions o)
         {
-            if (string.IsNullOrWhiteSpace(templatePath) || !File.Exists(templatePath))
-                throw new FileNotFoundException($"Template not found: {templatePath}", templatePath);
+            if (screenBgr.Empty() || templBgr.Empty()) return null;
 
-            using var screenBgr = await CaptureMatAsync(IntPtr.Zero);            // BGR 8UC3
-            using var templBgr = Cv2.ImRead(templatePath, ImreadModes.Color);  // BGR 8UC3
-
-            if (templBgr.Empty())
-                throw new InvalidOperationException($"Failed to load template: {templatePath}");
-
-            if (templBgr.Rows > screenBgr.Rows || templBgr.Cols > screenBgr.Cols)
-                return null; // шаблон больше экрана
-
-            // Приводим к одному типу (серый)
-            using var screenGray = new Mat();
-            using var templGray = new Mat();
-            Cv2.CvtColor(screenBgr, screenGray, ColorConversionCodes.BGR2GRAY);
-            Cv2.CvtColor(templBgr, templGray, ColorConversionCodes.BGR2GRAY);
-
-            using var result = new Mat();
-            Cv2.MatchTemplate(screenGray, templGray, result, TemplateMatchModes.CCoeffNormed);
-            Cv2.MinMaxLoc(result, out _, out var maxVal, out _, out var maxLoc);
-
-            if (maxVal < threshold)
-                return null;
-
-            return new System.Drawing.Point(maxLoc.X + templBgr.Width / 2, maxLoc.Y + templBgr.Height / 2);
-        }
-
-
-
-        /// <summary>Ждет появления изображения на экране</summary>
-        public async Task<System.Drawing.Point?> WaitForImageAsync(
-            string templatePath, int timeoutMs = 30000, double threshold = 0.8, int checkIntervalMs = 100)
-        {
-            if (string.IsNullOrWhiteSpace(templatePath) || !File.Exists(templatePath))
-                throw new FileNotFoundException($"Template not found: {templatePath}", templatePath);
-
-            var end = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-
-            while (DateTime.UtcNow < end)
+            // ROI на экране (абсолютные координаты)
+            Mat view = screenBgr;
+            var roiOffset = new SDPoint(0, 0);
+            if (o.Roi is CvRect r && r.Width > 0 && r.Height > 0)
             {
-                var pt = await FindImageOnScreenAsync(templatePath, threshold);
-                if (pt.HasValue)
-                    return pt;
-
-                await Task.Delay(checkIntervalMs);
+                int x = Math.Clamp(r.X, 0, screenBgr.Cols - 1);
+                int y = Math.Clamp(r.Y, 0, screenBgr.Rows - 1);
+                int w = Math.Clamp(r.Width, 1, screenBgr.Cols - x);
+                int h = Math.Clamp(r.Height, 1, screenBgr.Rows - y);
+                var clamp = new CvRect(x, y, w, h);
+                view = new Mat(screenBgr, clamp);
+                roiOffset = new SDPoint(clamp.X, clamp.Y);
             }
 
-            return null;
+            // Препроцессинг экрана/шаблона (gray/blur/canny)
+            using var viewP = Prep(view, o);
+            using var templP = _prepCache.GetOrCreate(templBgr, o);
+
+            if (templP.Cols > viewP.Cols || templP.Rows > viewP.Rows) return null;
+
+            // Поиск оптимального масштаба
+            double bestScore = o.HigherIsBetter ? double.NegativeInfinity : double.PositiveInfinity;
+            CvPoint bestLoc = default;
+            double bestScale = 1.0;
+
+            double start = o.ScaleMin, end = o.ScaleMax, step = o.ScaleStep <= 0 ? 0.01 : o.ScaleStep;
+            if (start > end) (start, end) = (end, start);
+
+            for (double s = start; s <= end + 1e-9; s += step)
+            {
+                if (Math.Abs(s - 1.0) < 1e-9)
+                {
+                    using var result = new Mat();
+                    Cv2.MatchTemplate(viewP, templP, result, o.Mode, mask: o.Mask);
+                    Cv2.MinMaxLoc(result, out var minVal, out var maxVal, out var minLoc, out var maxLoc);
+                    double score = o.HigherIsBetter ? maxVal : minVal;
+                    bool better = o.HigherIsBetter ? score > bestScore : score < bestScore;
+                    if (better)
+                    {
+                        bestScore = score;
+                        bestLoc = o.HigherIsBetter ? maxLoc : minLoc;
+                        bestScale = 1.0;
+                    }
+                }
+                else
+                {
+                    using var scaled = templP.Resize(new OpenCvSharp.Size(
+                        Math.Max(1, (int)(templP.Cols * s)),
+                        Math.Max(1, (int)(templP.Rows * s))),
+                        0, 0, InterpolationFlags.Linear);
+
+                    if (scaled.Cols > viewP.Cols || scaled.Rows > viewP.Rows) continue;
+
+                    using var result = new Mat();
+                    Cv2.MatchTemplate(viewP, scaled, result, o.Mode, mask: o.Mask);
+                    Cv2.MinMaxLoc(result, out var minVal, out var maxVal, out var minLoc, out var maxLoc);
+
+                    double score = o.HigherIsBetter ? maxVal : minVal;
+                    bool better = o.HigherIsBetter ? score > bestScore : score < bestScore;
+                    if (better)
+                    {
+                        bestScore = score;
+                        bestLoc = o.HigherIsBetter ? maxLoc : minLoc;
+                        bestScale = s;
+                    }
+                }
+            }
+
+            if (double.IsInfinity(bestScore)) return null;
+
+            bool isHardPass = o.HigherIsBetter ? (bestScore >= o.Threshold)
+                                               : (bestScore <= (1.0 - o.Threshold));
+
+            int wT = (int)Math.Round(templBgr.Width * bestScale);
+            int hT = (int)Math.Round(templBgr.Height * bestScale);
+            int x0 = roiOffset.X + bestLoc.X;
+            int y0 = roiOffset.Y + bestLoc.Y;
+
+            var rect = new Rect(x0, y0, wT, hT);
+            var center = new SDPoint(x0 + wT / 2, y0 + hT / 2);
+
+            return new MatchResult(rect, center, bestScore, bestScale, isHardPass);
         }
 
+        /// <summary>
+        /// Ищет лучший матч по ключу (одиночный снимок), с опциональным «жёстким» порогом.
+        /// </summary>
+        public async Task<MatchResult?> FindBestMatchByKeyAsync(
+            string key, TemplateMatchOptions? opt = null, bool allowNear = true, CancellationToken ct = default)
+        {
+            var o = opt ?? _defaultMatchOptions;
+
+            using var screenBgr = await CaptureMatAsync(IntPtr.Zero);
+            using var templBgr = _templates.GetTemplate(key);
+
+            // Если есть последняя удачная точка — сначала локальный ROI
+            var local = LocalizeOptionsByLastHit(o, key, templBgr);
+            var res = FindBestOnMat(screenBgr, templBgr, local);
+            if (res is { } r1)
+            {
+                if (allowNear || r1.IsHardPass)
+                {
+                    _lastHits[key] = r1.Center;
+                    return r1;
+                }
+            }
+
+            // fallback: глобальный поиск, если локальный не подтвердился
+            var global = o with { Roi = null };
+            var res2 = FindBestOnMat(screenBgr, templBgr, global);
+            if (res2 is { } r2 && (allowNear || r2.IsHardPass)) _lastHits[key] = r2.Center;
+            return res2;
+        }
+
+        /// <summary>
+        /// Ждёт появления шаблона, проверяя экран в цикле. Сначала локальный ROI вокруг последней точки,
+        /// периодически — глобальный поиск (каждые globalRefreshTicks итераций).
+        /// </summary>
+        public async Task<MatchResult?> WaitForBestMatchByKeyAsync(
+            string key,
+            int timeoutMs = 10000,
+            int checkIntervalMs = 120,
+            TemplateMatchOptions? opt = null,
+            bool allowNear = true,
+            int globalRefreshTicks = 8,
+            CancellationToken ct = default)
+        {
+            var o = opt ?? _defaultMatchOptions;
+            var end = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+
+            var session = await StartScreenCaptureAsync();
+            using var templ = _templates.GetTemplate(key);
+
+            try
+            {
+                int hits = 0;
+                MatchResult? last = null;
+                int tick = 0;
+
+                while (DateTime.UtcNow < end)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    var frame = await session.GetNextFrameAsync(ct);
+                    using var screen = ConvertToMat(frame);
+
+                    TemplateMatchOptions currentOpt;
+
+                    // локальный ROI несколько итераций, потом глобально «освежаемся»
+                    if (_lastHits.TryGetValue(key, out var lastPt) && (tick % globalRefreshTicks != 0))
+                        currentOpt = LocalizeOptionsByPoint(o, lastPt, templ);
+                    else
+                        currentOpt = o with { Roi = null };
+
+                    var res = FindBestOnMat(screen, templ, currentOpt);
+                    bool pass = res is not null && (allowNear || res.IsHardPass);
+
+                    if (pass)
+                    {
+                        if (last is not null &&
+                            Math.Abs(last.Center.X - res!.Center.X) < 2 &&
+                            Math.Abs(last.Center.Y - res!.Center.Y) < 2)
+                            hits++;
+                        else
+                            hits = 1;
+
+                        last = res;
+                        _lastHits[key] = res.Center;
+
+                        if (hits >= Math.Max(1, o.ConsecutiveHits))
+                            return res;
+                    }
+                    else
+                    {
+                        hits = 0;
+                        last = null;
+                    }
+
+                    tick++;
+                    await Task.Delay(checkIntervalMs, ct);
+                }
+
+                return null;
+            }
+            finally
+            {
+                session.Stop();
+            }
+        }
+
+        /// <summary>
+        /// Находит несколько совпадений (NMS). Масштабы — без перебора (s=1),
+        /// ориентировано на повторяющиеся однотипные элементы.
+        /// </summary>
+        public async Task<IReadOnlyList<MatchResult>> FindAllMatchesByKeyAsync(
+            string key, int maxResults = 5, double nmsOverlap = 0.3, TemplateMatchOptions? opt = null)
+        {
+            var o = opt ?? _defaultMatchOptions;
+            using var screenBgr = await CaptureMatAsync(IntPtr.Zero);
+            using var templBgr = _templates.GetTemplate(key);
+
+            return FindAllMatches_Internal(screenBgr, templBgr, o, maxResults, nmsOverlap);
+        }
+
+        private IReadOnlyList<MatchResult> FindAllMatches_Internal(
+            Mat screenBgr, Mat templBgr, TemplateMatchOptions o, int maxResults, double nmsOverlap)
+        {
+            var results = new List<MatchResult>();
+
+            // ROI + препроцессинг
+            Mat view = screenBgr;
+            var roiOffset = new SDPoint(0, 0);
+            if (o.Roi is CvRect r && r.Width > 0 && r.Height > 0)
+            {
+                int x = Math.Clamp(r.X, 0, screenBgr.Cols - 1);
+                int y = Math.Clamp(r.Y, 0, screenBgr.Rows - 1);
+                int roiW = Math.Clamp(r.Width, 1, screenBgr.Cols - x);
+                int roiH = Math.Clamp(r.Height, 1, screenBgr.Rows - y);
+                var clamp = new CvRect(x, y, roiW, roiH);
+                view = new Mat(screenBgr, clamp);
+                roiOffset = new SDPoint(clamp.X, clamp.Y);
+            }
+
+            using var viewP = Prep(view, o);
+            using var templP = _prepCache.GetOrCreate(templBgr, o);
+
+            using var result = new Mat();
+            Cv2.MatchTemplate(viewP, templP, result, o.Mode, mask: o.Mask);
+
+            using var work = result.Clone();
+            int tW = templP.Width, tH = templP.Height;
+
+            for (int i = 0; i < maxResults; i++)
+            {
+                Cv2.MinMaxLoc(work, out var minVal, out var maxVal, out var minLoc, out var maxLoc);
+                double score = o.HigherIsBetter ? maxVal : minVal;
+                var loc = o.HigherIsBetter ? maxLoc : minLoc;
+
+                bool pass = o.HigherIsBetter ? (score >= o.Threshold) : (score <= (1.0 - o.Threshold));
+                if (!pass) break;
+
+                var rect = new Rect(roiOffset.X + loc.X, roiOffset.Y + loc.Y, tW, tH);
+                var center = new SDPoint(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
+
+                results.Add(new MatchResult(rect, center, score, 1.0, true));
+
+                // Подавляем окрестность (простая NMS через зануление)
+                int supW = (int)(tW * (1.0 + nmsOverlap));
+                int supH = (int)(tH * (1.0 + nmsOverlap));
+
+                var sx = Math.Max(0, loc.X - (supW - tW) / 2);
+                var sy = Math.Max(0, loc.Y - (supH - tH) / 2);
+                var sw = Math.Min(supW, work.Cols - sx);
+                var sh = Math.Min(supH, work.Rows - sy);
+
+                if (sw <= 0 || sh <= 0) break;
+
+                var sup = new CvRect(sx, sy, sw, sh);
+                work[sup].SetTo(o.HigherIsBetter ? 0 : 1);
+            }
+
+            return results;
+        }
+
+        // -------- Public back-compat overloads --------
+        public Task<SDPoint?> FindImageOnScreenByKeyAsync(string key, double threshold) =>
+            FindBestMatchByKeyAsync(key, _defaultMatchOptions with { Threshold = threshold })
+            .ContinueWith(t => t.Result?.Center);
+
+        public Task<SDPoint?> WaitForImageByKeyAsync(
+            string key, int timeoutMs, double threshold, int checkIntervalMs = 150) =>
+            WaitForBestMatchByKeyAsync(key, timeoutMs, checkIntervalMs,
+                _defaultMatchOptions with { Threshold = threshold })
+            .ContinueWith(t => t.Result?.Center);
 
         #endregion
 
-        #region Recording
+        #region ---------- Recording ----------
 
         /// <summary>Записывает видео захвата</summary>
         public async Task<VideoRecorder> StartRecordingAsync(IntPtr hwnd, string outputPath,
@@ -826,7 +622,7 @@ namespace AutomationCore.Core
 
         #endregion
 
-        #region Utility Methods
+        #region ---------- Utility Methods ----------
 
         /// <summary>Сохраняет скриншот в файл</summary>
         public async Task SaveScreenshotAsync(string filePath, IntPtr hwnd = default,
@@ -870,26 +666,26 @@ namespace AutomationCore.Core
             using var m1 = BitmapToMat(img1);
             using var m2 = BitmapToMat(img2);
 
-            using var gray1 = new OpenCvSharp.Mat();
-            using var gray2 = new OpenCvSharp.Mat();
+            using var gray1 = new Mat();
+            using var gray2 = new Mat();
             Cv2.CvtColor(m1, gray1, ColorConversionCodes.BGR2GRAY);
             Cv2.CvtColor(m2, gray2, ColorConversionCodes.BGR2GRAY);
 
             return ComputeSsim(gray1, gray2);
         }
 
-        private static double ComputeSsim(OpenCvSharp.Mat img1, OpenCvSharp.Mat img2)
+        private static double ComputeSsim(Mat img1, Mat img2)
         {
             const double C1 = 6.5025, C2 = 58.5225;
 
-            using var I1 = new OpenCvSharp.Mat();
-            using var I2 = new OpenCvSharp.Mat();
+            using var I1 = new Mat();
+            using var I2 = new Mat();
             img1.ConvertTo(I1, MatType.CV_32F);
             img2.ConvertTo(I2, MatType.CV_32F);
 
             // mu
-            using var mu1 = new OpenCvSharp.Mat();
-            using var mu2 = new OpenCvSharp.Mat();
+            using var mu1 = new Mat();
+            using var mu2 = new Mat();
             Cv2.GaussianBlur(I1, mu1, new OpenCvSharp.Size(11, 11), 1.5);
             Cv2.GaussianBlur(I2, mu2, new OpenCvSharp.Size(11, 11), 1.5);
 
@@ -898,60 +694,107 @@ namespace AutomationCore.Core
             using var mu1mu2 = mu1.Mul(mu2);
 
             // sigma^2 and sigma12
-            using var I1I1_blur = new OpenCvSharp.Mat();
-            using var I2I2_blur = new OpenCvSharp.Mat();
-            using var I1I2_blur = new OpenCvSharp.Mat();
+            using var I1I1_blur = new Mat();
+            using var I2I2_blur = new Mat();
+            using var I1I2_blur = new Mat();
             Cv2.GaussianBlur(I1.Mul(I1), I1I1_blur, new OpenCvSharp.Size(11, 11), 1.5);
             Cv2.GaussianBlur(I2.Mul(I2), I2I2_blur, new OpenCvSharp.Size(11, 11), 1.5);
             Cv2.GaussianBlur(I1.Mul(I2), I1I2_blur, new OpenCvSharp.Size(11, 11), 1.5);
 
-            using var sigma1_sq = new OpenCvSharp.Mat();
-            using var sigma2_sq = new OpenCvSharp.Mat();
-            using var sigma12 = new OpenCvSharp.Mat();
+            using var sigma1_sq = new Mat();
+            using var sigma2_sq = new Mat();
+            using var sigma12 = new Mat();
             Cv2.Subtract(I1I1_blur, mu1mu1, sigma1_sq);
             Cv2.Subtract(I2I2_blur, mu2mu2, sigma2_sq);
             Cv2.Subtract(I1I2_blur, mu1mu2, sigma12);
 
-            // (2*mu1mu2 + C1)
-            using var t1 = new OpenCvSharp.Mat();
-            Cv2.AddWeighted(mu1mu2, 2, OpenCvSharp.Mat.Zeros(mu1mu2.Size(), mu1mu2.Type()), 0, C1, t1);
+            using var t1 = new Mat();
+            Cv2.AddWeighted(mu1mu2, 2, Mat.Zeros(mu1mu2.Size(), mu1mu2.Type()), 0, C1, t1);
 
-            // (2*sigma12 + C2)
-            using var t2 = new OpenCvSharp.Mat();
-            Cv2.AddWeighted(sigma12, 2, OpenCvSharp.Mat.Zeros(sigma12.Size(), sigma12.Type()), 0, C2, t2);
+            using var t2 = new Mat();
+            Cv2.AddWeighted(sigma12, 2, Mat.Zeros(sigma12.Size(), sigma12.Type()), 0, C2, t2);
 
             using var numerator = t1.Mul(t2);
 
-            // (mu1^2 + mu2^2 + C1)
-            using var t3 = new OpenCvSharp.Mat();
+            using var t3 = new Mat();
             Cv2.Add(mu1mu1, mu2mu2, t3);
             Cv2.Add(t3, new Scalar(C1), t3);
 
-            // (sigma1^2 + sigma2^2 + C2)
-            using var t4 = new OpenCvSharp.Mat();
+            using var t4 = new Mat();
             Cv2.Add(sigma1_sq, sigma2_sq, t4);
             Cv2.Add(t4, new Scalar(C2), t4);
 
             using var denominator = t3.Mul(t4);
 
-            using var ssimMap = new OpenCvSharp.Mat();
+            using var ssimMap = new Mat();
             Cv2.Divide(numerator, denominator, ssimMap);
 
             var mssim = Cv2.Mean(ssimMap);
-            return mssim.Val0; // одноканальное изображение
+            return mssim.Val0;
         }
-
 
         #endregion
 
-        #region Helper Methods
+        #region ---------- Helpers & Preprocessing ----------
+
+        private static Mat Prep(Mat srcBgr, TemplateMatchOptions o)
+        {
+            // Внимание: возвращаем новый Mat (цепочка копий), исходник не трогаем.
+            Mat cur = srcBgr;
+
+            if (o.UseGray)
+            {
+                var tmp = new Mat();
+                Cv2.CvtColor(cur, tmp, ColorConversionCodes.BGR2GRAY);
+                cur = tmp;
+            }
+
+            if (o.Blur is CvSize k && (k.Width > 1 || k.Height > 1))
+            {
+                var tmp = new Mat();
+                Cv2.GaussianBlur(cur, tmp, k, 0);
+                cur = tmp;
+            }
+
+            if (o.UseCanny)
+            {
+                var tmp = new Mat();
+                Cv2.Canny(cur, tmp, 80, 160);
+                cur = tmp;
+            }
+
+            return cur;
+        }
+
+        private TemplateMatchOptions LocalizeOptionsByLastHit(TemplateMatchOptions o, string key, Mat templBgr)
+        {
+            if (!_lastHits.TryGetValue(key, out var pt)) return o;
+            return LocalizeOptionsByPoint(o, pt, templBgr);
+        }
+
+        /// <summary>
+        /// Формирует локальный ROI вокруг точки <paramref name="center"/> (в пикселях экрана).
+        /// Ширина/высота ROI = scaleFactor * размер шаблона.
+        /// </summary>
+        private TemplateMatchOptions LocalizeOptionsByPoint(TemplateMatchOptions o, SDPoint center, Mat templBgr, double scaleFactor = 3.0)
+        {
+            int w = (int)(templBgr.Width * scaleFactor);
+            int h = (int)(templBgr.Height * scaleFactor);
+
+            var roi = new CvRect(
+                Math.Max(0, center.X - w / 2),
+                Math.Max(0, center.Y - h / 2),
+                w, h);
+
+            return o with { Roi = roi };
+        }
 
         private static string Normalize(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return string.Empty;
 
             var normalized = s.Normalize(NormalizationForm.FormKC)
-                .Replace('\u00A0', ' ')  // Non-breaking space
+                .Replace('\u00A0', ' ')  // NBSP
                 .Replace('\u2013', '-')  // En dash
                 .Replace('\u2014', '-'); // Em dash
 
@@ -988,7 +831,7 @@ namespace AutomationCore.Core
 
         #endregion
 
-        #region Dispose
+        #region ---------- Dispose ----------
 
         public void Dispose()
         {
@@ -997,7 +840,7 @@ namespace AutomationCore.Core
 
         #endregion
 
-        #region P/Invoke
+        #region ---------- P/Invoke ----------
 
         private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -1045,7 +888,7 @@ namespace AutomationCore.Core
         #endregion
     }
 
-    #region Supporting Classes
+    #region ---------- Supporting Classes ----------
 
     /// <summary>Информация об окне</summary>
     public class WindowInfo
@@ -1059,10 +902,8 @@ namespace AutomationCore.Core
         public bool IsMinimized { get; set; }
         public bool IsMaximized { get; set; }
 
-        public override string ToString()
-        {
-            return $"{Title} [{ProcessName}] ({Bounds.Width}x{Bounds.Height})";
-        }
+        public override string ToString() =>
+            $"{Title} [{ProcessName}] ({Bounds.Width}x{Bounds.Height})";
     }
 
     /// <summary>Сессия захвата</summary>
@@ -1087,28 +928,17 @@ namespace AutomationCore.Core
         }
 
         /// <summary>Получает следующий кадр</summary>
-        public async Task<CaptureFrame> GetNextFrameAsync(CancellationToken cancellationToken = default)
-        {
-            return await _capture.GetNextFrameAsync(cancellationToken);
-        }
+        public Task<CaptureFrame> GetNextFrameAsync(CancellationToken cancellationToken = default)
+            => _capture.GetNextFrameAsync(cancellationToken);
 
         /// <summary>Получает последний кадр</summary>
-        public CaptureFrame GetLastFrame()
-        {
-            return _capture.GetLastFrame();
-        }
+        public CaptureFrame GetLastFrame() => _capture.GetLastFrame();
 
         /// <summary>Получает метрики</summary>
-        public CaptureMetrics GetMetrics()
-        {
-            return _capture.GetMetrics();
-        }
+        public CaptureMetrics GetMetrics() => _capture.GetMetrics();
 
         /// <summary>Останавливает захват</summary>
-        public void Stop()
-        {
-            _capture.StopCapture();
-        }
+        public void Stop() => _capture.StopCapture();
 
         public void Dispose()
         {
@@ -1192,10 +1022,7 @@ namespace AutomationCore.Core
                         await Task.Delay(delay, cancellationToken);
                     }
                 }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
+                catch (OperationCanceledException) { break; }
             }
         }
 
@@ -1227,6 +1054,63 @@ namespace AutomationCore.Core
         MJPEG,
         XVID,
         MP4V
+    }
+
+    #endregion
+
+    #region ---------- Internal: Template Preprocess Cache ----------
+
+    /// <summary>
+    /// Кэширует предобработанные версии шаблонов (Gray/Blur/Canny).
+    /// Масштабирование НЕ кэшируем (слишком много вариантов) — масштаб делаем на лету.
+    /// </summary>
+    internal sealed class TemplatePreprocessCache : IDisposable
+    {
+        private readonly ConcurrentDictionary<Key, Mat> _cache = new();
+
+        public Mat GetOrCreate(Mat templBgr, TemplateMatchOptions o)
+        {
+            var k = new Key(o.UseGray, o.UseCanny, o.Blur);
+
+            if (_cache.TryGetValue(k, out var cached) && !cached.Empty())
+                return cached.Clone();
+
+            // Строим новую версию
+            Mat cur = templBgr;
+
+            if (o.UseGray)
+            {
+                var tmp = new Mat();
+                Cv2.CvtColor(cur, tmp, ColorConversionCodes.BGR2GRAY);
+                cur = tmp;
+            }
+
+            if (o.Blur is CvSize b && (b.Width > 1 || b.Height > 1))
+            {
+                var tmp = new Mat();
+                Cv2.GaussianBlur(cur, tmp, b, 0);
+                cur = tmp;
+            }
+
+            if (o.UseCanny)
+            {
+                var tmp = new Mat();
+                Cv2.Canny(cur, tmp, 80, 160);
+                cur = tmp;
+            }
+
+            _cache[k] = cur.Clone();
+            return cur;
+        }
+
+        public void Dispose()
+        {
+            foreach (var kv in _cache)
+                kv.Value.Dispose();
+            _cache.Clear();
+        }
+
+        internal readonly record struct Key(bool Gray, bool Canny, CvSize? Blur);
     }
 
     #endregion
