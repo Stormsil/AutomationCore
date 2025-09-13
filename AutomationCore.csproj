@@ -37,4 +37,11 @@
 		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
 	</ItemGroup>
 
+	<ItemGroup>
+	  <Folder Include="Core\Extensions\" />
+	  <Folder Include="Features\Recording\" />
+	  <Folder Include="Infrastructure\Input\" />
+	  <Folder Include="Public\Extensions\" />
+	</ItemGroup>
+
 </Project>

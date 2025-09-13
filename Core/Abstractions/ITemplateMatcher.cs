@@ -1,68 +1,144 @@
-﻿// AutomationCore/Core/Abstractions/ITemplateMatcher.cs
+﻿// Core/Abstractions/ITemplateMatcher.cs
 using System;
-using System.Drawing;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
-using OpenCvSharp;
-using static AutomationCore.Core.EnhancedScreenCapture;
+using AutomationCore.Core.Models;
 
 namespace AutomationCore.Core.Abstractions
 {
-    /// <summary>Интерфейс для поиска изображений (вне DI-слоя сервиса).</summary>
+    /// <summary>
+    /// Интерфейс для поиска изображений на экране
+    /// </summary>
     public interface ITemplateMatcher
     {
-        Task<MatchResult> FindBestAsync(MatchRequest request);
-        Task<IReadOnlyList<MatchResult>> FindAllAsync(MatchRequest request);
-        Task<MatchResult> WaitForAsync(WaitForMatchRequest request);
+        /// <summary>Находит лучшее совпадение для шаблона</summary>
+        ValueTask<MatchingResult> FindBestMatchAsync(MatchRequest request, CancellationToken ct = default);
+
+        /// <summary>Находит все совпадения для шаблона</summary>
+        ValueTask<MatchingResult> FindAllMatchesAsync(MatchRequest request, CancellationToken ct = default);
+
+        /// <summary>Ждет появления шаблона на экране</summary>
+        ValueTask<MatchingResult> WaitForMatchAsync(WaitForMatchRequest request, CancellationToken ct = default);
+
+        /// <summary>Поток совпадений в реальном времени</summary>
+        IAsyncEnumerable<MatchingResult> WatchForMatchesAsync(MatchRequest request, CancellationToken ct = default);
     }
 
-    public class MatchRequest
+    /// <summary>
+    /// Хранилище шаблонов
+    /// </summary>
+    public interface ITemplateStorage : IDisposable
     {
-        public string TemplateKey { get; set; }
-        public Mat SourceImage { get; set; }
-        public MatchOptions Options { get; set; } = MatchOptions.Default;
+        /// <summary>Проверяет существование шаблона</summary>
+        ValueTask<bool> ContainsAsync(string key, CancellationToken ct = default);
 
-        // Fluent API
-        public MatchRequest WithThreshold(double threshold)
+        /// <summary>Загружает шаблон</summary>
+        ValueTask<TemplateData> LoadAsync(string key, CancellationToken ct = default);
+
+        /// <summary>Сохраняет шаблон</summary>
+        ValueTask SaveAsync(string key, TemplateData template, CancellationToken ct = default);
+
+        /// <summary>Удаляет шаблон</summary>
+        ValueTask<bool> DeleteAsync(string key, CancellationToken ct = default);
+
+        /// <summary>Получает список всех шаблонов</summary>
+        ValueTask<IReadOnlyList<string>> GetKeysAsync(CancellationToken ct = default);
+
+        /// <summary>События изменения шаблонов</summary>
+        event EventHandler<TemplateChangedEventArgs>? TemplateChanged;
+    }
+
+    /// <summary>
+    /// Данные шаблона
+    /// </summary>
+    public sealed record TemplateData
+    {
+        public required ReadOnlyMemory<byte> Data { get; init; }
+        public required int Width { get; init; }
+        public required int Height { get; init; }
+        public required int Channels { get; init; }
+        public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
+        public DateTime ModifiedAt { get; init; } = DateTime.UtcNow;
+        public string? Description { get; init; }
+        public Dictionary<string, object>? Metadata { get; init; }
+
+        public bool IsEmpty => Data.IsEmpty || Width <= 0 || Height <= 0;
+        public int BytesPerPixel => Channels;
+        public long TotalBytes => Width * Height * Channels;
+    }
+
+    /// <summary>
+    /// Событие изменения шаблона
+    /// </summary>
+    public sealed class TemplateChangedEventArgs : EventArgs
+    {
+        public required string Key { get; init; }
+        public required TemplateChangeType ChangeType { get; init; }
+        public DateTime Timestamp { get; init; } = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Типы изменений шаблонов
+    /// </summary>
+    public enum TemplateChangeType
+    {
+        Created,
+        Modified,
+        Deleted
+    }
+
+    /// <summary>
+    /// Препроцессор изображений
+    /// </summary>
+    public interface IImagePreprocessor
+    {
+        /// <summary>Применяет предобработку к изображению</summary>
+        ValueTask<ProcessedImage> ProcessAsync(
+            ReadOnlyMemory<byte> imageData,
+            int width, int height, int channels,
+            PreprocessingOptions options,
+            CancellationToken ct = default);
+    }
+
+    /// <summary>
+    /// Обработанное изображение
+    /// </summary>
+    public sealed record ProcessedImage : IDisposable
+    {
+        public required ReadOnlyMemory<byte> Data { get; init; }
+        public required int Width { get; init; }
+        public required int Height { get; init; }
+        public required int Channels { get; init; }
+        public required PreprocessingOptions AppliedOptions { get; init; }
+
+        private bool _disposed;
+
+        public void Dispose()
         {
-            Options.Threshold = threshold;
-            return this;
-        }
-
-        public MatchRequest InRegion(Rectangle region)
-        {
-            Options.SearchRegion = region;
-            return this;
+            if (!_disposed)
+            {
+                // Освобождение ресурсов если нужно
+                _disposed = true;
+            }
         }
     }
 
-    public class MatchOptions
+    /// <summary>
+    /// Кэш результатов сопоставления
+    /// </summary>
+    public interface IMatchCache
     {
-        public static MatchOptions Default => new();
-        public TemplateMatchModes Mode { get; set; } = TemplateMatchModes.CCoeffNormed;
-        public Mat Mask { get; set; } = null;
-        public double Threshold { get; set; } = 0.9;
-        public Rectangle? SearchRegion { get; set; }
-        public bool UseMultiScale { get; set; } = true;
-        public ScaleRange ScaleRange { get; set; } = new(0.97, 1.03, 0.01);
-        public PreprocessingOptions Preprocessing { get; set; } = PreprocessingOptions.Default;
-    }
+        /// <summary>Получает результат из кэша</summary>
+        ValueTask<MatchingResult?> GetAsync(string key, CancellationToken ct = default);
 
+        /// <summary>Сохраняет результат в кэш</summary>
+        ValueTask SetAsync(string key, MatchingResult result, TimeSpan? ttl = null, CancellationToken ct = default);
 
-    public readonly record struct ScaleRange(double Min, double Max, double Step = 0.01);
+        /// <summary>Удаляет результат из кэша</summary>
+        ValueTask<bool> RemoveAsync(string key, CancellationToken ct = default);
 
-    public class PreprocessingOptions
-    {
-        public static PreprocessingOptions Default => new();
-        public bool UseGray { get; set; } = true;
-        public bool UseCanny { get; set; } = false;
-        public OpenCvSharp.Size? Blur { get; set; } = new OpenCvSharp.Size(3, 3);
-    }
-
-    public class WaitForMatchRequest
-    {
-        public string TemplateKey { get; set; }
-        public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(10);
-        public TimeSpan CheckInterval { get; set; } = TimeSpan.FromMilliseconds(120);
-        public MatchOptions MatchOptions { get; set; } = MatchOptions.Default;
+        /// <summary>Очищает кэш</summary>
+        ValueTask ClearAsync(CancellationToken ct = default);
     }
 }

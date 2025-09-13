@@ -1,118 +1,90 @@
-﻿// ========== Core/Abstractions/IScreenCapture.cs ==========
+﻿// Core/Abstractions/IScreenCapture.cs
 using System;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using AutomationCore.Capture;
-using OpenCvSharp;
+using AutomationCore.Core.Models;
 
 namespace AutomationCore.Core.Abstractions
 {
-    /// <summary>Основной интерфейс для захвата экрана.</summary>
+    /// <summary>
+    /// Основной интерфейс для захвата экрана
+    /// </summary>
     public interface IScreenCapture : IDisposable
     {
-        Task<CaptureResult> CaptureAsync(CaptureRequest request);
-        Task<ICaptureSession> StartSessionAsync(CaptureRequest request);
+        /// <summary>Поддерживается ли захват на текущей системе</summary>
         bool IsSupported { get; }
+
+        /// <summary>Захватывает один кадр</summary>
+        ValueTask<CaptureResult> CaptureAsync(CaptureRequest request, CancellationToken ct = default);
+
+        /// <summary>Создает сессию потокового захвата</summary>
+        ValueTask<ICaptureSession> StartSessionAsync(CaptureRequest request, CancellationToken ct = default);
     }
 
-    // ---- Запрос/цели ----
-    public class CaptureRequest
-    {
-        public CaptureTarget Target { get; set; }
-        public CaptureSettings Settings { get; set; }
-        public CancellationToken CancellationToken { get; set; }
-
-        public static CaptureRequest ForWindow(WindowHandle window)
-            => new() { Target = new WindowTarget(window) };
-
-        public static CaptureRequest ForScreen(int monitorIndex = 0)
-            => new() { Target = new ScreenTarget(monitorIndex) };
-    }
-
-    public abstract class CaptureTarget { }
-
-    public class WindowTarget : CaptureTarget
-    {
-        public WindowHandle Window { get; }
-        public WindowTarget(WindowHandle window) => Window = window;
-    }
-
-    public class ScreenTarget : CaptureTarget
-    {
-        public int MonitorIndex { get; }
-        public ScreenTarget(int index) => MonitorIndex = index;
-    }
-
-    // ---- Результат кадра в удобном формате (BGRA 8bpp) ----
-    public class CaptureResult
-    {
-        public byte[] Data { get; set; } = Array.Empty<byte>(); // BGRA
-        public int Width { get; set; }
-        public int Height { get; set; }
-        public int Stride { get; set; }
-        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-
-        public Mat ToMat()
-        {
-            if (Data is null || Data.Length == 0) return new Mat();
-
-            GCHandle handle = default;
-            try
-            {
-                handle = GCHandle.Alloc(Data, GCHandleType.Pinned);
-                using var bgra = Mat.FromPixelData(Height, Width, MatType.CV_8UC4, handle.AddrOfPinnedObject(), Stride);
-                var bgr = new Mat();
-                Cv2.CvtColor(bgra, bgr, ColorConversionCodes.BGRA2BGR);
-                return bgr;
-            }
-            finally
-            {
-                if (handle.IsAllocated) handle.Free();
-            }
-        }
-
-        public Bitmap ToBitmap()
-        {
-            if (Data is null || Data.Length == 0) return new Bitmap(1, 1);
-
-            var bmp = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
-            var rect = new Rectangle(0, 0, Width, Height);
-            var bmpData = bmp.LockBits(rect, ImageLockMode.WriteOnly, bmp.PixelFormat);
-
-            try
-            {
-                int rowBytes = Width * 4;
-                unsafe
-                {
-                    fixed (byte* pSrcBase = Data)
-                    {
-                        var src = pSrcBase;
-                        var dst = (byte*)bmpData.Scan0;
-                        for (int y = 0; y < Height; y++)
-                        {
-                            Buffer.MemoryCopy(src + y * Stride, dst + y * bmpData.Stride, bmpData.Stride, rowBytes);
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                bmp.UnlockBits(bmpData);
-            }
-            return bmp;
-        }
-    }
-
-    // ---- Сессия стрим-захвата ----
+    /// <summary>
+    /// Сессия потокового захвата
+    /// </summary>
     public interface ICaptureSession : IDisposable
     {
-        void OnFrameCaptured(EventHandler<FrameCapturedEventArgs> handler);
-        Task<CaptureFrame> GetNextFrameAsync(CancellationToken cancellationToken = default);
-        CaptureFrame GetLastFrame();
+        /// <summary>Целевой объект захвата</summary>
+        CaptureTarget Target { get; }
+
+        /// <summary>Активна ли сессия</summary>
+        bool IsActive { get; }
+
+        /// <summary>Получает следующий кадр</summary>
+        ValueTask<CaptureFrame> GetNextFrameAsync(CancellationToken ct = default);
+
+        /// <summary>Поток кадров в реальном времени</summary>
+        IAsyncEnumerable<CaptureFrame> GetFrameStreamAsync(CancellationToken ct = default);
+
+        /// <summary>Получает последний захваченный кадр (если есть)</summary>
+        CaptureFrame? GetLastFrame();
+
+        /// <summary>Получает метрики сессии</summary>
         CaptureMetrics GetMetrics();
+
+        /// <summary>Подписка на события захвата</summary>
+        event EventHandler<FrameCapturedEventArgs>? FrameCaptured;
+        event EventHandler<CaptureErrorEventArgs>? CaptureError;
+
+        /// <summary>Останавливает захват</summary>
         void Stop();
+    }
+
+    /// <summary>
+    /// Метрики захвата
+    /// </summary>
+    public sealed record CaptureMetrics
+    {
+        public long TotalFrames { get; init; }
+        public long DroppedFrames { get; init; }
+        public double CurrentFps { get; init; }
+        public double AverageFps { get; init; }
+        public DateTime StartTime { get; init; }
+        public TimeSpan Uptime { get; init; }
+        public long TotalBytes { get; init; }
+
+        public double DropRate => TotalFrames > 0 ? (double)DroppedFrames / TotalFrames : 0;
+    }
+
+    /// <summary>
+    /// Событие захвата кадра
+    /// </summary>
+    public sealed class FrameCapturedEventArgs : EventArgs
+    {
+        public required CaptureFrame Frame { get; init; }
+        public required CaptureMetrics Metrics { get; init; }
+    }
+
+    /// <summary>
+    /// Событие ошибки захвата
+    /// </summary>
+    public sealed class CaptureErrorEventArgs : EventArgs
+    {
+        public required Exception Exception { get; init; }
+        public required CaptureTarget Target { get; init; }
+        public bool IsFatal { get; init; }
     }
 }
