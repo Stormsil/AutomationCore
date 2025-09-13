@@ -1,7 +1,4 @@
 ﻿// AutomationCore/Core/Services/OverlayService.cs
-using System;
-using System.Windows;
-using System.Windows.Media;
 using AutomationCore.UI;
 
 namespace AutomationCore.Core.Services
@@ -14,11 +11,16 @@ namespace AutomationCore.Core.Services
         public void Hide() => _overlay.Hide();
         public void Clear() => _overlay.Clear();
 
-        public void HighlightRegion(Rect rect, Color color, int ttlMs = 1000, int thickness = 3)
+        public void HighlightRegion(System.Drawing.Rectangle rect,
+                                    System.Windows.Media.Color color,
+                                    int ttlMs = 1000,
+                                    int thickness = 3)
         {
             _overlay.Show();
             _overlay.SetClickThrough(true);
-            _overlay.DrawBox(rect, color, thickness, ttlMs);
+
+            var wpfRect = new System.Windows.Rect(rect.X, rect.Y, rect.Width, rect.Height);
+            _overlay.DrawBox(wpfRect, color, thickness, ttlMs);
         }
 
         public void Dispose() => _overlay.Dispose();

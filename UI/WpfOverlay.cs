@@ -1,6 +1,7 @@
 ﻿// AutomationCore/UI/WpfOverlay.cs
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -8,7 +9,6 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using System.Runtime.InteropServices;
 
 namespace AutomationCore.UI
 {
@@ -28,7 +28,7 @@ namespace AutomationCore.UI
 
         private void UIThread()
         {
-            var app = new Application();
+            var app = new System.Windows.Application();
             _win = new OverlayWindow();
             _ready.Set();
             app.Run(_win);
@@ -39,10 +39,10 @@ namespace AutomationCore.UI
         public void Clear() => _win?.Dispatcher.Invoke(() => _win.Clear());
         public void SetClickThrough(bool enabled) => _win?.Dispatcher.Invoke(() => _win.SetClickThrough(enabled));
 
-        public void DrawBox(Rect rect, Color color, int thickness = 3, int ttlMs = 0)
+        public void DrawBox(System.Windows.Rect rect, System.Windows.Media.Color color, int thickness = 3, int ttlMs = 0)
             => _win?.Dispatcher.Invoke(() => _win.DrawBox(rect, color, thickness, ttlMs));
 
-        public void DrawText(Point at, string text, Color color, double fontSize = 12, int ttlMs = 0)
+        public void DrawText(System.Windows.Point at, string text, System.Windows.Media.Color color, double fontSize = 12, int ttlMs = 0)
             => _win?.Dispatcher.Invoke(() => _win.DrawText(at, text, color, fontSize, ttlMs));
 
         public void Dispose()
@@ -62,7 +62,7 @@ namespace AutomationCore.UI
             {
                 WindowStyle = WindowStyle.None;
                 AllowsTransparency = true;
-                Background = Brushes.Transparent;
+                Background = System.Windows.Media.Brushes.Transparent;
                 Topmost = true;
                 ShowInTaskbar = false;
                 Focusable = false;
@@ -97,15 +97,15 @@ namespace AutomationCore.UI
                 _items.Clear();
             }
 
-            public void DrawBox(Rect rect, Color color, int thickness, int ttlMs)
+            public void DrawBox(System.Windows.Rect rect, System.Windows.Media.Color color, int thickness, int ttlMs)
             {
-                var r = new Rectangle
+                var r = new System.Windows.Shapes.Rectangle
                 {
                     Width = Math.Max(0, rect.Width),
                     Height = Math.Max(0, rect.Height),
                     Stroke = Make(color),
                     StrokeThickness = Math.Max(1, thickness),
-                    Fill = Brushes.Transparent
+                    Fill = System.Windows.Media.Brushes.Transparent
                 };
                 Canvas.SetLeft(r, rect.X);
                 Canvas.SetTop(r, rect.Y);
@@ -113,14 +113,14 @@ namespace AutomationCore.UI
                 _items.Add((r, ttlMs > 0 ? DateTime.UtcNow.AddMilliseconds(ttlMs) : null));
             }
 
-            public void DrawText(Point at, string text, Color color, double fontSize, int ttlMs)
+            public void DrawText(System.Windows.Point at, string text, System.Windows.Media.Color color, double fontSize, int ttlMs)
             {
-                var tb = new System.Windows.Controls.TextBlock
+                var tb = new TextBlock
                 {
                     Text = text ?? string.Empty,
                     Foreground = Make(color),
                     FontSize = Math.Max(6, fontSize),
-                    FontFamily = new FontFamily("Segoe UI")
+                    FontFamily = new System.Windows.Media.FontFamily("Segoe UI")
                 };
                 Canvas.SetLeft(tb, at.X);
                 Canvas.SetTop(tb, at.Y);
@@ -128,7 +128,7 @@ namespace AutomationCore.UI
                 _items.Add((tb, ttlMs > 0 ? DateTime.UtcNow.AddMilliseconds(ttlMs) : null));
             }
 
-            private static SolidColorBrush Make(Color c)
+            private static SolidColorBrush Make(System.Windows.Media.Color c)
             {
                 var b = new SolidColorBrush(c);
                 b.Freeze();
@@ -162,10 +162,7 @@ namespace AutomationCore.UI
                 SetWindowLong(hwnd, GWL_EXSTYLE, ex);
             }
 
-            private void ApplyExtendedStyles()
-            {
-                SetClickThrough(true);
-            }
+            private void ApplyExtendedStyles() => SetClickThrough(true);
 
             // Win32
             private const int GWL_EXSTYLE = -20;

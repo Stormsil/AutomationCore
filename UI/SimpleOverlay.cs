@@ -1,14 +1,11 @@
 ﻿// AutomationCore/UI/SimpleOverlay.cs
 using System;
-using System.Drawing;
-using System.Windows;
-using System.Windows.Media;
 
 namespace AutomationCore.UI
 {
     /// <summary>
     /// Тонкая совместимая обёртка над WpfOverlay.
-    /// Оставляет старый API (Rectangle/Point/Color), но рисует через WPF.
+    /// Внешний API — System.Drawing.*, внутри всё конвертируется в WPF.
     /// </summary>
     public sealed class SimpleOverlay : IDisposable
     {
@@ -19,21 +16,20 @@ namespace AutomationCore.UI
         public void Clear() => _wpf.Clear();
         public void SetClickThrough(bool enabled) => _wpf.SetClickThrough(enabled);
 
-        public void DrawBox(Rectangle rect, System.Drawing.Color color, int thickness = 3, int ttlMs = 0)
+        public void DrawBox(System.Drawing.Rectangle rect, System.Drawing.Color color, int thickness = 3, int ttlMs = 0)
         {
-            _wpf.DrawBox(ToRect(rect), ToMediaColor(color), thickness, ttlMs);
+            var wpfRect = new System.Windows.Rect(rect.X, rect.Y, rect.Width, rect.Height);
+            var wpfColor = System.Windows.Media.Color.FromArgb(color.A, color.R, color.G, color.B);
+            _wpf.DrawBox(wpfRect, wpfColor, thickness, ttlMs);
         }
 
-        public void DrawText(Point at, string text, System.Drawing.Color color, float fontSize = 12f, int ttlMs = 0)
+        public void DrawText(System.Drawing.Point at, string text, System.Drawing.Color color, float fontSize = 12f, int ttlMs = 0)
         {
-            _wpf.DrawText(new System.Windows.Point(at.X, at.Y), text, ToMediaColor(color), fontSize, ttlMs);
+            var wpfPoint = new System.Windows.Point(at.X, at.Y);
+            var wpfColor = System.Windows.Media.Color.FromArgb(color.A, color.R, color.G, color.B);
+            _wpf.DrawText(wpfPoint, text, wpfColor, fontSize, ttlMs);
         }
 
         public void Dispose() => _wpf.Dispose();
-
-        // ---- helpers ----
-        private static System.Windows.Rect ToRect(Rectangle r) => new(r.X, r.Y, r.Width, r.Height);
-        private static System.Windows.Media.Color ToMediaColor(System.Drawing.Color c)
-            => System.Windows.Media.Color.FromArgb(c.A, c.R, c.G, c.B);
     }
 }

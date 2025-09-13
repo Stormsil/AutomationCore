@@ -25,7 +25,15 @@ namespace AutomationCore.Input
         {
             private readonly HumanizedInput _h;
             public MouseAdapter(HumanizedInput h) => _h = h;
-            public Point CurrentPosition => System.Windows.Forms.Cursor.Position;
+              public Point CurrentPosition
+              {
+                  get { GetCursorPos(out POINT p); return new Point(p.X, p.Y);
+                    }
+              }
+              [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetCursorPos(out POINT lpPoint);
+              struct POINT
+                {
+                    public int X; public int Y; }
 
             public async Task MoveToAsync(Point target, MouseMoveOptions options = null)
                 => await _h.MoveMouseAsync(target.X, target.Y, options?.DurationMs ?? 0);

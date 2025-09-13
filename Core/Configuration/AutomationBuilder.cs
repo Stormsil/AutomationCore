@@ -32,6 +32,7 @@ namespace AutomationCore.Core.Configuration
             _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(new Core.Matching.CacheOptions()));
             _services.AddSingleton<ITemplateMatcherService, TemplateMatcherService>();
             _services.AddSingleton<IOverlayService, OverlayService>();
+            _services.AddSingleton<WindowImageSearch>();
         }
 
 
@@ -62,6 +63,7 @@ namespace AutomationCore.Core.Configuration
             configure?.Invoke(options);
 
             _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(options));
+
 
 
             return this;
