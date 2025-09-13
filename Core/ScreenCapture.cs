@@ -23,6 +23,7 @@ using CvPoint = OpenCvSharp.Point;
 using CvRect = OpenCvSharp.Rect;
 using CvSize = OpenCvSharp.Size;
 using SDPoint = System.Drawing.Point;
+using AutomationCore.Core.Abstractions;
 
 namespace AutomationCore.Core
 {
@@ -907,7 +908,7 @@ namespace AutomationCore.Core
     }
 
     /// <summary>Сессия захвата</summary>
-    public class CaptureSession : IDisposable
+    public class CaptureSession : ICaptureSession
     {
         private readonly EnhancedWindowsGraphicsCapture _capture;
         private readonly IntPtr _windowHandle;

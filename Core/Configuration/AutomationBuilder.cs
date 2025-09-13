@@ -1,6 +1,13 @@
 ﻿using AutomationCore.Assets;
 using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Services;
+using Microsoft.Extensions.DependencyInjection;
+using AutomationCore.Core.Capture;
+using AutomationCore.Input;
+using AutomationCore.Core.Matching;
+using Microsoft.Extensions.Logging;
+
+
 
 namespace AutomationCore.Core.Configuration
 {
@@ -15,11 +22,18 @@ namespace AutomationCore.Core.Configuration
         {
             _services = services;
 
-            // Регистрируем базовые сервисы
             _services.AddSingleton<IWindowService, WindowService>();
             _services.AddSingleton<IPInvokeWrapper, PInvokeWrapper>();
             _services.AddSingleton<ICaptureFactory, WgcCaptureFactory>();
+
+            // базовые зависимости для матчера (минимальные рабочие)
+            _services.AddSingleton<IPreprocessor, BasicPreprocessor>();
+            _services.AddSingleton<IMatchingEngine, BasicMatchingEngine>();
+            _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(new Core.Matching.CacheOptions()));
+            _services.AddSingleton<ITemplateMatcherService, TemplateMatcherService>();
+            _services.AddSingleton<IOverlayService, OverlayService>();
         }
+
 
         public AutomationBuilder WithTemplateStore(Action<TemplateStoreOptions> configure)
         {
@@ -37,25 +51,18 @@ namespace AutomationCore.Core.Configuration
             var options = new InputOptions();
             configure?.Invoke(options);
 
-            _services.Configure<InputOptions>(o =>
-            {
-                o.MouseSpeed = options.MouseSpeed;
-                o.TypingSpeed = options.TypingSpeed;
-                o.EnableHumanization = options.EnableHumanization;
-            });
-
-            _services.AddSingleton<IInputSimulator, HumanizedInputSimulator>();
-
+            _services.AddSingleton<IInputSimulator>(sp => new HumanizedInputSimulator(options));
             return this;
         }
+
 
         public AutomationBuilder WithCaching(Action<CacheOptions> configure = null)
         {
             var options = new CacheOptions();
             configure?.Invoke(options);
 
-            _services.AddSingleton<IMatchCache>(sp =>
-                new MemoryMatchCache(options, sp.GetService<ILogger<MemoryMatchCache>>()));
+            _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(options));
+
 
             return this;
         }

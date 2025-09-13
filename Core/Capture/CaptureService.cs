@@ -2,6 +2,7 @@
 using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Services;
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
 namespace AutomationCore.Core.Capture
 {
@@ -37,9 +38,10 @@ namespace AutomationCore.Core.Capture
 
             if (windows.Count == 0)
                 throw new WindowNotFoundException($"Window '{windowTitle}' not found");
+          
+            var request = CaptureRequest.ForWindow(windows[0].Handle);
+            request.Settings = settings ?? CaptureSettings.Default;
 
-            var request = CaptureRequest.ForWindow(windows[0].Handle)
-                .WithSettings(settings ?? CaptureSettings.Default);
 
             using var capture = _captureFactory.CreateCapture();
             return await capture.CaptureAsync(request);
