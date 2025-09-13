@@ -25,6 +25,8 @@ using CvSize = OpenCvSharp.Size;
 using SDPoint = System.Drawing.Point;
 using AutomationCore.Core.Abstractions;
 
+
+
 namespace AutomationCore.Core
 {
     /// <summary>
@@ -33,11 +35,11 @@ namespace AutomationCore.Core
     public class EnhancedScreenCapture : IDisposable
     {
         // ===== Public result type (единый) =====
-        public sealed record MatchResult(Rect Bounds,
-                                         SDPoint Center,
-                                         double Score,
-                                         double Scale,
-                                         bool IsHardPass);
+        public sealed record MatchResult(System.Drawing.Rectangle Bounds,
+                                          SDPoint Center,
+                                          double Score,
+                                          double Scale,
+                                          bool IsHardPass);
 
         private readonly Dictionary<IntPtr, EnhancedWindowsGraphicsCapture> _captureInstances = new();
         private readonly object _lock = new();
@@ -410,7 +412,7 @@ namespace AutomationCore.Core
             int x0 = roiOffset.X + bestLoc.X;
             int y0 = roiOffset.Y + bestLoc.Y;
 
-            var rect = new Rect(x0, y0, wT, hT);
+            var rect = new System.Drawing.Rectangle(x0, y0, wT, hT);
             var center = new SDPoint(x0 + wT / 2, y0 + hT / 2);
 
             return new MatchResult(rect, center, bestScore, bestScale, isHardPass);
@@ -573,7 +575,7 @@ namespace AutomationCore.Core
                 bool pass = o.HigherIsBetter ? (score >= o.Threshold) : (score <= (1.0 - o.Threshold));
                 if (!pass) break;
 
-                var rect = new Rect(roiOffset.X + loc.X, roiOffset.Y + loc.Y, tW, tH);
+                var rect = new System.Drawing.Rectangle(roiOffset.X + loc.X, roiOffset.Y + loc.Y, tW, tH);
                 var center = new SDPoint(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
 
                 results.Add(new MatchResult(rect, center, score, 1.0, true));

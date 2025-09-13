@@ -99,7 +99,7 @@ namespace AutomationCore.Core.Matching
             int x0 = roiOffset.X + bestLoc.X;
             int y0 = roiOffset.Y + bestLoc.Y;
 
-            var bounds = new System.Windows.Rect(x0, y0, wT, hT);
+            var bounds = new System.Drawing.Rectangle(x0, y0, wT, hT);
             var center = new System.Drawing.Point(x0 + wT / 2, y0 + hT / 2);
 
             return Task.FromResult(new MatchResult(bounds, center, bestScore, bestScale, pass));

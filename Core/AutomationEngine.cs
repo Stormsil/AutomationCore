@@ -5,6 +5,7 @@ using AutomationCore.Core.Services;
 using Microsoft.Extensions.DependencyInjection; 
 using AutomationCore.Workflows;
 using AutomationCore.Core.Matching;
+using System.Windows.Media;
 
 
 
@@ -51,7 +52,7 @@ namespace AutomationCore.Core
             // Показываем оверлей если нужно
             if (options.ShowOverlay)
             {
-                Overlay.HighlightRegion(match.Bounds, Color.Green, 2000);
+                 Overlay.HighlightRegion(match.Bounds, Colors.Green, 2000);
             }
 
             // Кликаем

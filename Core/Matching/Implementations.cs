@@ -53,7 +53,6 @@ namespace AutomationCore.Core.Matching
             if (sourceP.Empty() || templP.Empty())
                 return Task.FromResult<MatchResult>(null);
 
-            // простая мульти-скейл стратегия
             double bestScore = double.NegativeInfinity;
             OpenCvSharp.Point bestLoc = default;
             double bestScale = 1.0;
@@ -64,7 +63,9 @@ namespace AutomationCore.Core.Matching
             {
                 using var templS = Math.Abs(s - 1.0) < 1e-9
                     ? templP.Clone()
-                    : templP.Resize(new OpenCvSharp.Size(Math.Max(1, (int)(templP.Width * s)), Math.Max(1, (int)(templP.Height * s))));
+                    : templP.Resize(new OpenCvSharp.Size(
+                        Math.Max(1, (int)(templP.Width * s)),
+                        Math.Max(1, (int)(templP.Height * s))));
 
                 if (templS.Width > sourceP.Width || templS.Height > sourceP.Height)
                     continue;
@@ -87,12 +88,14 @@ namespace AutomationCore.Core.Matching
             int w = (int)Math.Round(templP.Width * bestScale);
             int h = (int)Math.Round(templP.Height * bestScale);
 
-            var rect = new Rect(bestLoc.X, bestLoc.Y, w, h);
+            // ОСТАВЛЯЕМ только Drawing.Rectangle
+            var rect = new System.Drawing.Rectangle(bestLoc.X, bestLoc.Y, w, h);
             var center = new System.Drawing.Point(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
 
             return Task.FromResult(new MatchResult(rect, center, bestScore, bestScale, bestScore >= o.Threshold));
         }
     }
+
 
     // ===== Кэш =====
     public sealed class MemoryMatchCache : IMatchCache

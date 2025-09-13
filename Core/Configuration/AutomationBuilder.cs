@@ -56,9 +56,9 @@ namespace AutomationCore.Core.Configuration
         }
 
 
-        public AutomationBuilder WithCaching(Action<CacheOptions> configure = null)
+        public AutomationBuilder WithCaching(Action<AutomationCore.Core.Matching.CacheOptions> configure = null)
         {
-            var options = new CacheOptions();
+            var options = new AutomationCore.Core.Matching.CacheOptions();
             configure?.Invoke(options);
 
             _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(options));

@@ -1,5 +1,5 @@
 ﻿using AutomationCore.Input;
-using System.Net.NetworkInformation;
+using System.Drawing;
 
 namespace AutomationCore.Core.Abstractions
 {

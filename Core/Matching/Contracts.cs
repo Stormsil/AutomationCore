@@ -7,11 +7,6 @@ using static AutomationCore.Core.EnhancedScreenCapture;
 
 namespace AutomationCore.Core.Matching
 {
-    public interface ITemplateMatcherService
-    {
-        Task<MatchResult> FindAsync(string templateKey, Mat sourceImage, AutomationCore.Core.Abstractions.MatchOptions options = null);
-        Task<MatchResult> WaitForAsync(string templateKey, WaitForMatchOptions options = null);
-    }
 
     public class WaitForMatchOptions
     {
