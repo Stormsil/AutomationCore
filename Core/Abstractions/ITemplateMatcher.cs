@@ -38,13 +38,15 @@ namespace AutomationCore.Core.Abstractions
     public class MatchOptions
     {
         public static MatchOptions Default => new();
-
+        public TemplateMatchModes Mode { get; set; } = TemplateMatchModes.CCoeffNormed;
+        public Mat Mask { get; set; } = null;
         public double Threshold { get; set; } = 0.9;
         public Rectangle? SearchRegion { get; set; }
         public bool UseMultiScale { get; set; } = true;
         public ScaleRange ScaleRange { get; set; } = new(0.97, 1.03, 0.01);
         public PreprocessingOptions Preprocessing { get; set; } = PreprocessingOptions.Default;
     }
+
 
     public readonly record struct ScaleRange(double Min, double Max, double Step = 0.01);
 

@@ -5,6 +5,7 @@ using AutomationCore.Assets;
 using AutomationCore.Core.Abstractions;
 using OpenCvSharp;
 using static AutomationCore.Core.EnhancedScreenCapture;
+using AutomationCore.Core.Matching;
 
 namespace AutomationCore.Core.Matching
 {
@@ -14,11 +15,21 @@ namespace AutomationCore.Core.Matching
     public class TemplateMatcherService : ITemplateMatcherService
     {
         private readonly ITemplateStore _templateStore;
+        private readonly IPreprocessor _preproc;
+        private readonly IMatchingEngine _engine;
 
-        public TemplateMatcherService(ITemplateStore templateStore)
+        // DI-конструктор (предпочтительный)
+        public TemplateMatcherService(ITemplateStore templateStore, IPreprocessor preproc, IMatchingEngine engine)
         {
             _templateStore = templateStore ?? throw new ArgumentNullException(nameof(templateStore));
+            _preproc = preproc ?? throw new ArgumentNullException(nameof(preproc));
+            _engine = engine ?? throw new ArgumentNullException(nameof(engine));
         }
+
+        // запасной конструктор для назад-совместимости (без DI)
+        public TemplateMatcherService(ITemplateStore templateStore)
+            : this(templateStore, new BasicPreprocessor(), new BasicMatchingEngine())
+        { }
 
         public async Task<MatchResult> FindAsync(string templateKey, TemplateMatchOptions presets)
         {
@@ -30,12 +41,13 @@ namespace AutomationCore.Core.Matching
             return await FindAsync(templateKey, screen, options);
         }
 
-        public Task<MatchResult> FindAsync(string templateKey, Mat sourceImage, MatchOptions options = null)
+        public async Task<MatchResult> FindAsync(string templateKey, Mat sourceImage, MatchOptions options = null)
         {
             options ??= new MatchOptions();
 
-            // Загружаем шаблон (BGR 8UC3)
             using var templBgr = _templateStore.GetTemplate(templateKey);
+            if (templBgr.Empty() || sourceImage.Empty())
+                return null;
 
             // ROI на источнике
             Mat view = sourceImage;
@@ -52,58 +64,24 @@ namespace AutomationCore.Core.Matching
                 roiOffset = new System.Drawing.Point(clamp.X, clamp.Y);
             }
 
-            using var viewP = Prep(view, options.Preprocessing);
-            using var templP = Prep(templBgr, options.Preprocessing);
+            using var viewP = await _preproc.ProcessAsync(view, options.Preprocessing);
+            using var templP = await _preproc.ProcessAsync(templBgr, options.Preprocessing);
 
-            if (templP.Empty() || viewP.Empty()) return Task.FromResult<MatchResult>(null);
-            if (templP.Cols > viewP.Cols || templP.Rows > viewP.Rows) return Task.FromResult<MatchResult>(null);
+            var hit = await _engine.FindBestMatchAsync(viewP, templP, options);
+            if (hit is null) return null;
 
-            // Поиск лучшего совпадения (по умолчанию CCoeffNormed; чем больше, тем лучше)
-            double bestScore = double.NegativeInfinity;
-            OpenCvSharp.Point bestLoc = default;
-            double bestScale = 1.0;
+            // корректируем координаты в системе экрана
+            var bounds = new System.Drawing.Rectangle(
+                roiOffset.X + hit.Bounds.X,
+                roiOffset.Y + hit.Bounds.Y,
+                hit.Bounds.Width,
+                hit.Bounds.Height);
 
-            double sMin = options.UseMultiScale ? Math.Min(options.ScaleRange.Min, options.ScaleRange.Max) : 1.0;
-            double sMax = options.UseMultiScale ? Math.Max(options.ScaleRange.Min, options.ScaleRange.Max) : 1.0;
-            double step = options.UseMultiScale ? Math.Max(0.005, (sMax - sMin) / 12.0) : 1.0; // адаптивный шаг
+            var center = new System.Drawing.Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
 
-            for (double s = sMin; s <= sMax + 1e-9; s += step)
-            {
-                using var templS = (Math.Abs(s - 1.0) < 1e-9)
-                    ? templP.Clone()
-                    : templP.Resize(new OpenCvSharp.Size(
-                        Math.Max(1, (int)(templP.Cols * s)),
-                        Math.Max(1, (int)(templP.Rows * s))));
-
-                if (templS.Cols > viewP.Cols || templS.Rows > viewP.Rows) continue;
-
-                using var result = new Mat();
-                Cv2.MatchTemplate(viewP, templS, result, TemplateMatchModes.CCoeffNormed);
-                Cv2.MinMaxLoc(result, out _, out var maxVal, out _, out var maxLoc);
-
-                if (maxVal > bestScore)
-                {
-                    bestScore = maxVal;
-                    bestLoc = maxLoc;
-                    bestScale = s;
-                }
-            }
-
-            if (double.IsNegativeInfinity(bestScore))
-                return Task.FromResult<MatchResult>(null);
-
-            bool pass = bestScore >= options.Threshold;
-
-            int wT = (int)Math.Round(templBgr.Width * bestScale);
-            int hT = (int)Math.Round(templBgr.Height * bestScale);
-            int x0 = roiOffset.X + bestLoc.X;
-            int y0 = roiOffset.Y + bestLoc.Y;
-
-            var bounds = new System.Drawing.Rectangle(x0, y0, wT, hT);
-            var center = new System.Drawing.Point(x0 + wT / 2, y0 + hT / 2);
-
-            return Task.FromResult(new MatchResult(bounds, center, bestScore, bestScale, pass));
+            return new MatchResult(bounds, center, hit.Score, hit.Scale, hit.IsHardPass);
         }
+
 
         // ---- helpers ----
 
@@ -141,7 +119,9 @@ namespace AutomationCore.Core.Matching
             {
                 Threshold = t?.Threshold ?? 0.90,
                 UseMultiScale = t is { ScaleMin: var a, ScaleMax: var b } && Math.Abs(a - b) > 1e-9,
-                ScaleRange = new ScaleRange(t?.ScaleMin ?? 1.0, t?.ScaleMax ?? 1.0),
+                ScaleRange = new ScaleRange(t?.ScaleMin ?? 1.0, t?.ScaleMax ?? 1.0, t?.ScaleStep ?? 0.01),
+                Mode = t?.Mode ?? TemplateMatchModes.CCoeffNormed,
+                Mask = t?.Mask,
                 Preprocessing = new PreprocessingOptions
                 {
                     UseGray = t?.UseGray ?? true,
@@ -155,5 +135,6 @@ namespace AutomationCore.Core.Matching
 
             return opt;
         }
+
     }
 }

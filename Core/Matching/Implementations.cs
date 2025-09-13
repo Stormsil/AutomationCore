@@ -4,6 +4,8 @@ using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using OpenCvSharp;
 using static AutomationCore.Core.EnhancedScreenCapture;
+using System.Collections.Concurrent;
+
 
 namespace AutomationCore.Core.Matching
 {
@@ -53,15 +55,24 @@ namespace AutomationCore.Core.Matching
             if (sourceP.Empty() || templP.Empty())
                 return Task.FromResult<MatchResult>(null);
 
-            double bestScore = double.NegativeInfinity;
+            var mode = o?.Mode ?? TemplateMatchModes.CCoeffNormed;
+            var mask = o?.Mask;
+
+            bool HigherIsBetter = mode != TemplateMatchModes.SqDiff &&
+                                  mode != TemplateMatchModes.SqDiffNormed;
+
+            double bestScore = HigherIsBetter ? double.NegativeInfinity : double.PositiveInfinity;
             OpenCvSharp.Point bestLoc = default;
             double bestScale = 1.0;
 
-            var (minS, maxS, step) = o.ScaleRange;
+            var (minS, maxS, step0) = o?.ScaleRange ?? new AutomationCore.Core.Abstractions.ScaleRange(1.0, 1.0, 0.01);
+            double step = (o?.UseMultiScale == true) ? Math.Max(0.005, step0) : 1.0;
+            double sStart = (o?.UseMultiScale == true) ? Math.Min(minS, maxS) : 1.0;
+            double sEnd = (o?.UseMultiScale == true) ? Math.Max(minS, maxS) : 1.0;
 
-            for (double s = o.UseMultiScale ? minS : 1.0; s <= (o.UseMultiScale ? maxS : 1.0); s += (o.UseMultiScale ? step : 1.0))
+            for (double s = sStart; s <= sEnd + 1e-9; s += step)
             {
-                using var templS = Math.Abs(s - 1.0) < 1e-9
+                using var templS = (Math.Abs(s - 1.0) < 1e-9)
                     ? templP.Clone()
                     : templP.Resize(new OpenCvSharp.Size(
                         Math.Max(1, (int)(templP.Width * s)),
@@ -71,39 +82,46 @@ namespace AutomationCore.Core.Matching
                     continue;
 
                 using var result = new Mat();
-                Cv2.MatchTemplate(sourceP, templS, result, TemplateMatchModes.CCoeffNormed);
-                Cv2.MinMaxLoc(result, out _, out var maxVal, out _, out var maxLoc);
+                // mask может быть null — OpenCV нормально это принимает (игнор)
+                Cv2.MatchTemplate(sourceP, templS, result, mode, mask);
 
-                if (maxVal > bestScore)
+                Cv2.MinMaxLoc(result, out var minVal, out var maxVal, out var minLoc, out var maxLoc);
+
+                double score = HigherIsBetter ? maxVal : minVal;
+                bool better = HigherIsBetter ? (score > bestScore) : (score < bestScore);
+                if (better)
                 {
-                    bestScore = maxVal;
-                    bestLoc = maxLoc;
+                    bestScore = score;
+                    bestLoc = HigherIsBetter ? maxLoc : minLoc;
                     bestScale = s;
                 }
             }
 
-            if (double.IsNegativeInfinity(bestScore))
+            if ((HigherIsBetter && double.IsNegativeInfinity(bestScore)) ||
+                (!HigherIsBetter && double.IsPositiveInfinity(bestScore)))
                 return Task.FromResult<MatchResult>(null);
 
             int w = (int)Math.Round(templP.Width * bestScale);
             int h = (int)Math.Round(templP.Height * bestScale);
 
-            // ОСТАВЛЯЕМ только Drawing.Rectangle
             var rect = new System.Drawing.Rectangle(bestLoc.X, bestLoc.Y, w, h);
             var center = new System.Drawing.Point(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
+            bool pass = HigherIsBetter ? (bestScore >= (o?.Threshold ?? 0.9))
+                                       : (bestScore <= (1.0 - (o?.Threshold ?? 0.9)));
 
-            return Task.FromResult(new MatchResult(rect, center, bestScore, bestScale, bestScore >= o.Threshold));
+            return Task.FromResult(new MatchResult(rect, center, bestScore, bestScale, pass));
         }
+
     }
 
 
     // ===== Кэш =====
     public sealed class MemoryMatchCache : IMatchCache
     {
-        private readonly CacheOptions _opt;
+        private readonly MatchCacheOptions _opt;
         private readonly ConcurrentDictionary<string, (MatchResult value, DateTime exp)> _map = new();
 
-        public MemoryMatchCache(CacheOptions opt) => _opt = opt ?? new CacheOptions();
+        public MemoryMatchCache(MatchCacheOptions opt) => _opt = opt ?? new MatchCacheOptions();
 
         public bool TryGet(string key, out MatchResult result)
         {
@@ -118,7 +136,8 @@ namespace AutomationCore.Core.Matching
 
         public void Set(string key, MatchResult result, TimeSpan ttl)
         {
-            _map[key] = (result, DateTime.UtcNow.Add(ttl <= TimeSpan.Zero ? _opt.DefaultTtl : ttl));
+            var exp = DateTime.UtcNow.Add(ttl <= TimeSpan.Zero ? _opt.DefaultTtl : ttl);
+            _map[key] = (result, exp);
         }
     }
 }

@@ -23,6 +23,7 @@ using D3D = SharpDX.Direct3D;
 using D3D11 = SharpDX.Direct3D11;
 using DXGI = SharpDX.DXGI;
 
+
 namespace AutomationCore.Capture
 {
     /// <summary>
@@ -195,6 +196,7 @@ namespace AutomationCore.Capture
             if (_settings.IsCursorCaptureEnabled is bool c) session.IsCursorCaptureEnabled = c;
 
 
+
             session.StartCapture();
 
             using var cts = new CancellationTokenSource(_settings.CaptureTimeout);
@@ -251,6 +253,7 @@ namespace AutomationCore.Capture
 
                 if (_settings.IsCursorCaptureEnabled is bool c)
                     _captureSession.IsCursorCaptureEnabled = c;
+
 
 
                 _captureSession.StartCapture();
@@ -399,11 +402,12 @@ namespace AutomationCore.Capture
                 // Update metrics
                 UpdateMetrics();
 
-                // Add to buffer (кольцевой буфер владеет кадрами)
+                // Добавляем оригинал в кольцевой буфер (он владеет кадром)
                 _frameBuffer.Add(captureFrame);
 
-                // Raise event
-                Raise(FrameCaptured, new FrameCapturedEventArgs { Frame = captureFrame });
+                // В событие отдаём КЛОН — подписчик обязан Dispose() клона
+                var copyForEvent = captureFrame.Clone();
+                Raise(FrameCaptured, new FrameCapturedEventArgs { Frame = copyForEvent });
             }
             catch (Exception ex)
             {
@@ -412,32 +416,32 @@ namespace AutomationCore.Capture
         }
 
         private CaptureFrame ProcessFrame(Direct3D11CaptureFrame frame)
-        {
-            var texture = GetSharpDXTexture(frame.Surface);
+        {   
             var width = frame.ContentSize.Width;
             var height = frame.ContentSize.Height;
-
-            // Apply ROI if configured
-            var roi = _settings.RegionOfInterest;
-            if (roi.HasValue && roi.Value.Width > 0 && roi.Value.Height > 0)
+            using (var texture = GetSharpDXTexture(frame.Surface))
             {
-                width = Math.Min(roi.Value.Width, width);
-                height = Math.Min(roi.Value.Height, height);
+                // Apply ROI if configured
+                var roi = _settings.RegionOfInterest;
+                if (roi.HasValue && roi.Value.Width > 0 && roi.Value.Height > 0)
+                {
+                    width = Math.Min(roi.Value.Width, width);
+                    height = Math.Min(roi.Value.Height, height);
+                }
+
+                var captureFrame = new CaptureFrame
+                {
+                    Timestamp = DateTime.UtcNow,
+                    Width = width,
+                    Height = height,
+                    FrameNumber = _metrics.TotalFrames,
+                    WindowHandle = _windowHandle
+                };
+
+                // ВАЖНО: копируем, пока texture жив
+                CopyTextureData(texture, captureFrame, roi);
+                return captureFrame;
             }
-
-            var captureFrame = new CaptureFrame
-            {
-                Timestamp = DateTime.UtcNow,
-                Width = width,
-                Height = height,
-                FrameNumber = _metrics.TotalFrames,
-                WindowHandle = _windowHandle
-            };
-
-            // Copy texture data into pooled byte[]
-            CopyTextureData(texture, captureFrame, roi);
-
-            return captureFrame;
         }
 
         private void CopyTextureData(D3D11.Texture2D source, CaptureFrame frame, Rectangle? roi)

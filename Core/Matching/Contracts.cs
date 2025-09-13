@@ -33,7 +33,7 @@ namespace AutomationCore.Core.Matching
         void Set(string key, MatchResult result, TimeSpan ttl);
     }
 
-    public class CacheOptions
+    public class MatchCacheOptions
     {
         public int Capacity { get; set; } = 256;
         public TimeSpan DefaultTtl { get; set; } = TimeSpan.FromSeconds(5);

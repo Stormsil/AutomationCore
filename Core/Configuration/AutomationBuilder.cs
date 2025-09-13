@@ -29,7 +29,7 @@ namespace AutomationCore.Core.Configuration
             // базовые зависимости для матчера (минимальные рабочие)
             _services.AddSingleton<IPreprocessor, BasicPreprocessor>();
             _services.AddSingleton<IMatchingEngine, BasicMatchingEngine>();
-            _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(new Core.Matching.CacheOptions()));
+            _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(new Core.Matching.MatchCacheOptions()));
             _services.AddSingleton<ITemplateMatcherService, TemplateMatcherService>();
             _services.AddSingleton<IOverlayService, OverlayService>();
             _services.AddSingleton<WindowImageSearch>();
@@ -42,7 +42,7 @@ namespace AutomationCore.Core.Configuration
             configure(options);
 
             _services.AddSingleton<ITemplateStore>(sp =>
-                new FileTemplateStore(options, sp.GetService<ILogger<FileTemplateStore>>()));
+                new FileTemplateStore(new TemplateStoreOptions(), sp.GetService<ILogger<FileTemplateStore>>()));
 
             return this;
         }
@@ -57,15 +57,11 @@ namespace AutomationCore.Core.Configuration
         }
 
 
-        public AutomationBuilder WithCaching(Action<AutomationCore.Core.Matching.CacheOptions> configure = null)
+        public AutomationBuilder WithCaching(Action<AutomationCore.Core.Matching.MatchCacheOptions> configure = null)
         {
-            var options = new AutomationCore.Core.Matching.CacheOptions();
+            var options = new AutomationCore.Core.Matching.MatchCacheOptions();
             configure?.Invoke(options);
-
             _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(options));
-
-
-
             return this;
         }
 

@@ -33,17 +33,23 @@ namespace AutomationCore.Core.Capture
             else
                 throw new ArgumentException("Unknown capture target");
 
-            var frame = await wgc.CaptureFrameAsync();
+            using var frame = await wgc.CaptureFrameAsync();
 
-            // Свернём в CaptureResult (BGRA32)
+            var data = new byte[frame.Stride * frame.Height];
+            for (int y = 0; y < frame.Height; y++)
+            {
+                Buffer.BlockCopy(frame.Data, y * frame.Stride, data, y * frame.Stride, frame.Stride);
+            }
+
             return new CaptureResult
             {
-                Data = frame.Data ?? Array.Empty<byte>(),
+                Data = data,
                 Width = frame.Width,
                 Height = frame.Height,
                 Stride = frame.Stride,
                 Timestamp = frame.Timestamp
             };
+
         }
 
         public async Task<ICaptureSession> StartSessionAsync(CaptureRequest request)
