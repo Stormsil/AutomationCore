@@ -366,20 +366,6 @@ namespace AutomationCore.Features.Workflows
         ValueTask<WorkflowResult> ExecuteAsync(CancellationToken ct = default);
     }
 
-    /// <summary>
-    /// Контекст выполнения workflow
-    /// </summary>
-    public interface IWorkflowContext
-    {
-        IServiceProvider Services { get; }
-        Dictionary<string, object> Variables { get; }
-        CancellationToken CancellationToken { get; set; }
-
-        T GetService<T>() where T : notnull;
-        void SetVariable<T>(string key, T value);
-        T? GetVariable<T>(string key);
-        bool HasVariable(string key);
-    }
 
     /// <summary>
     /// Базовый интерфейс шага workflow
@@ -401,7 +387,10 @@ namespace AutomationCore.Features.Workflows
     {
         public IServiceProvider Services { get; }
         public Dictionary<string, object> Variables { get; } = new();
+        IDictionary<string, object> IWorkflowContext.Variables => Variables;
         public CancellationToken CancellationToken { get; set; }
+        public object? LastStepResult { get; set; }
+        public WorkflowExecutionState State { get; set; } = WorkflowExecutionState.NotStarted;
 
         public WorkflowContext(IServiceProvider services)
         {
@@ -413,17 +402,6 @@ namespace AutomationCore.Features.Workflows
             return (T)Services.GetService(typeof(T))!;
         }
 
-        public void SetVariable<T>(string key, T value)
-        {
-            if (value != null)
-            {
-                Variables[key] = value;
-            }
-            else
-            {
-                Variables.Remove(key);
-            }
-        }
 
         public T? GetVariable<T>(string key)
         {
@@ -435,6 +413,40 @@ namespace AutomationCore.Features.Workflows
         }
 
         public bool HasVariable(string key) => Variables.ContainsKey(key);
+
+        public void SetVariable(string key, object value)
+        {
+            if (value != null)
+            {
+                Variables[key] = value;
+            }
+            else
+            {
+                Variables.Remove(key);
+            }
+        }
+
+        public void LogInfo(string message)
+        {
+            // TODO: Implement proper logging
+            Console.WriteLine($"[INFO] {message}");
+        }
+
+        public void LogWarning(string message)
+        {
+            // TODO: Implement proper logging
+            Console.WriteLine($"[WARNING] {message}");
+        }
+
+        public void LogError(string message, Exception? ex = null)
+        {
+            // TODO: Implement proper logging
+            Console.WriteLine($"[ERROR] {message}");
+            if (ex != null)
+            {
+                Console.WriteLine($"Exception: {ex}");
+            }
+        }
     }
 
     #endregion
