@@ -11,13 +11,13 @@ namespace AutomationCore.Workflows
     /// Fluent API для создания и выполнения workflow-сценариев.
     /// Поддерживает базовые шаги, условия и повторные попытки.
     /// </summary>
-    public class WorkflowBuilder : IWorkflowBuilder
+    public class WorkflowBuilder_OLD : IWorkflowBuilder
     {
         private readonly string _name;
         private readonly IAutomationEngine _engine;
         private readonly List<IWorkflowStep> _steps;
 
-        public WorkflowBuilder(string name, IAutomationEngine engine)
+        public WorkflowBuilder_OLD(string name, IAutomationEngine engine)
         {
             _name = string.IsNullOrWhiteSpace(name) ? "Workflow" : name;
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));

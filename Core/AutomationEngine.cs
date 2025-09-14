@@ -2,11 +2,11 @@
 using AutomationCore.Core.Capture;
 using AutomationCore.Core.Matching;
 using AutomationCore.Core.Services;
-using Microsoft.Extensions.DependencyInjection; 
-using AutomationCore.Workflows;
+using Microsoft.Extensions.DependencyInjection;
+// using AutomationCore.Workflows; // <-- УДАЛИТЕ ЭТУ СТРОКУ, ЕСЛИ ОНА ВСЕ ЕЩЕ ЕСТЬ
 using System.Windows.Media;
-
-
+using AutomationCore.Features.Workflows; // <-- ЭТОТ USING ДОЛЖЕН БЫТЬ
+using Microsoft.Extensions.Logging;     // <-- ЭТОТ USING НУЖЕН ДЛЯ ILogger
 
 namespace AutomationCore.Core
 {
@@ -42,19 +42,16 @@ namespace AutomationCore.Core
         {
             options ??= ClickOptions.Default;
 
-            // Ищем изображение
             var match = await Matcher.FindAsync(templateKey, options.MatchOptions);
 
             if (match == null || match.Score < options.MatchOptions.Threshold)
                 return false;
 
-            // Показываем оверлей если нужно
             if (options.ShowOverlay)
             {
-                 Overlay.HighlightRegion(match.Bounds, Colors.Green, 2000);
+                Overlay.HighlightRegion(match.Bounds, Colors.Green, 2000);
             }
 
-            // Кликаем
             await Input.Mouse.MoveToAsync(match.Center, options.MouseOptions);
             await Task.Delay(options.DelayBeforeClick);
             await Input.Mouse.ClickAsync(options.Button);
@@ -67,7 +64,11 @@ namespace AutomationCore.Core
         /// </summary>
         public IWorkflowBuilder CreateWorkflow(string name)
         {
-            return new WorkflowBuilder(name, this);
+            // Получаем логгер из DI-контейнера
+            var logger = _services.GetRequiredService<ILogger<WorkflowBuilder>>();
+
+            // Эта реализация теперь полностью соответствует исправленному интерфейсу IAutomationEngine
+            return new WorkflowBuilder(name, _services, logger);
         }
     }
 }
