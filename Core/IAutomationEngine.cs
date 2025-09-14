@@ -1,6 +1,6 @@
 ﻿// AutomationCore/Core/IAutomationEngine.cs
 using AutomationCore.Core.Abstractions;
-using AutomationCore.Input;
+using AutomationCore.Infrastructure.Input;
 using AutomationCore.Workflows;
 using System.Threading.Tasks;
 

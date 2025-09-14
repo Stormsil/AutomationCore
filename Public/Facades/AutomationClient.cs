@@ -2,16 +2,20 @@
 using AutomationCore.Core;
 using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Models;
+using AutomationCore.Core.Configuration;
 using AutomationCore.Features.ImageSearch;
 using AutomationCore.Features.WindowAutomation;
 using AutomationCore.Features.Workflows;
-using AutomationCore.Workflows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Drawing;
 using System.Threading;
 using System.Threading.Tasks;
+using WorkflowBuilder = AutomationCore.Features.Workflows.WorkflowBuilder;
+using WindowInfo = AutomationCore.Core.Models.WindowInfo;
+using WindowHandle = AutomationCore.Core.Models.WindowHandle;
+using IWorkflowBuilder = AutomationCore.Features.Workflows.IWorkflowBuilder;
 
 namespace AutomationCore.Public.Facades
 {

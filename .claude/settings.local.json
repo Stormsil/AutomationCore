@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build)",
+      "Bash(del \"C:\\Users\\warfr\\source\\repos\\AutomationCore\\Infrastructure\\Input\\WindowsInputProvider.cs\")",
+      "Bash(dotnet build:*)",
+      "Bash(find:*)",
+      "Bash(tree:*)",
+      "Bash(del \"Core\\Domain\\Capture\\ScreenCapture.cs\")",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

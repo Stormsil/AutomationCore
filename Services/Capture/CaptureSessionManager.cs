@@ -18,7 +18,7 @@ namespace AutomationCore.Services.Capture
     {
         private readonly ConcurrentDictionary<string, ManagedCaptureSession> _sessions = new();
         private readonly ILogger<CaptureSessionManager> _logger;
-        private readonly Timer _cleanupTimer;
+        private readonly System.Threading.Timer _cleanupTimer;
         private bool _disposed;
 
         public CaptureSessionManager(ILogger<CaptureSessionManager> logger)
@@ -26,7 +26,7 @@ namespace AutomationCore.Services.Capture
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
             // Очистка неактивных сессий каждые 30 секунд
-            _cleanupTimer = new Timer(CleanupInactiveSessions, null,
+            _cleanupTimer = new System.Threading.Timer(CleanupInactiveSessions, null,
                 TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
         }
 

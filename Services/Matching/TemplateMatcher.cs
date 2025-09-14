@@ -9,6 +9,8 @@ using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Exceptions;
 using AutomationCore.Core.Models;
 using Microsoft.Extensions.Logging;
+using MatchOptions = AutomationCore.Core.Models.MatchOptions;
+using PreprocessingOptions = AutomationCore.Core.Models.PreprocessingOptions;
 
 namespace AutomationCore.Services.Matching
 {
@@ -204,7 +206,7 @@ namespace AutomationCore.Services.Matching
 
         #region Private Methods
 
-        private async ValueTask<TemplateData> LoadTemplateAsync(string templateKey, CancellationToken ct)
+        private async ValueTask<Core.Abstractions.TemplateData> LoadTemplateAsync(string templateKey, CancellationToken ct)
         {
             if (!await _storage.ContainsAsync(templateKey, ct))
             {
@@ -222,7 +224,7 @@ namespace AutomationCore.Services.Matching
 
         private async ValueTask<MatchResult[]> PerformMatchingAsync(
             MatchRequest request,
-            TemplateData templateData,
+            Core.Abstractions.TemplateData templateData,
             CancellationToken ct)
         {
             // Предобработка исходного изображения

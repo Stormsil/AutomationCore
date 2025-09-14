@@ -459,10 +459,10 @@ namespace AutomationCore.Features.Workflows
     public sealed record WorkflowResult
     {
         public string Name { get; init; } = string.Empty;
-        public bool Success { get; init; } = true;
-        public TimeSpan Duration { get; init; }
-        public Exception? Error { get; init; }
-        public string? FailedStep { get; init; }
+        public bool Success { get; set; } = true;
+        public TimeSpan Duration { get; set; }
+        public Exception? Error { get; set; }
+        public string? FailedStep { get; set; }
         public List<StepResult> CompletedSteps { get; init; } = new();
 
         public int TotalSteps => CompletedSteps.Count;

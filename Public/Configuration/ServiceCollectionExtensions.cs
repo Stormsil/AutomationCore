@@ -1,10 +1,16 @@
 ﻿// Public/Configuration/ServiceCollectionExtensions.cs
 using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Models;
+using AutomationCore.Core.Configuration;
 using AutomationCore.Features.ImageSearch;
 using AutomationCore.Features.WindowAutomation;
 using AutomationCore.Features.Workflows;
+using AutomationCore.Infrastructure.Capture;
+using AutomationCore.Infrastructure.Capture.WindowsGraphicsCapture;
 using AutomationCore.Infrastructure.Platform;
+using AutomationCore.Infrastructure.Input;
+using AutomationCore.Infrastructure.Storage;
+using AutomationCore.Infrastructure.Matching;
 using AutomationCore.Public.Configuration;
 using AutomationCore.Services.Capture;
 using AutomationCore.Services.Input;
@@ -14,6 +20,8 @@ using AutomationCore.Workflows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
+using PreprocessingOptions = AutomationCore.Core.Models.PreprocessingOptions;
+using MatchOptions = AutomationCore.Core.Models.MatchOptions;
 
 namespace AutomationCore.Public.Configuration
 {
@@ -67,22 +75,22 @@ namespace AutomationCore.Public.Configuration
             // Платформенные сервисы
             services.AddSingleton<IPlatformWindowOperations, WindowsPlatformService>();
 
-            // Устройства захвата (заглушки для интерфейсов)
-            services.AddTransient<ICaptureDevice, WgcCaptureDevice>();
+            // Устройства захвата (реальные реализации WGC)
+            services.AddTransient<ICaptureDevice, WgcDevice>();
             services.AddSingleton<ICaptureSessionManager, CaptureSessionManager>();
 
-            // Платформенный ввод (заглушка)
-            services.AddSingleton<IPlatformInputProvider, WindowsInputProvider>();
+            // Платформенный ввод (реальная реализация)
+            services.AddSingleton<IPlatformInputProvider, Infrastructure.Input.WindowsInputProvider>();
 
             // Хранение шаблонов
             services.AddSingleton<ITemplateStorage>(provider =>
             {
-                // Здесь будет реальная реализация файлового хранилища
-                return new InMemoryTemplateStorage(); // Заглушка
+                var automationOptions = provider.GetRequiredService<AutomationOptions>();
+                return new FileTemplateStorage(automationOptions.TemplatesPath);
             });
 
             // Препроцессинг изображений
-            services.AddSingleton<IImagePreprocessor, OpenCvPreprocessor>();
+            services.AddSingleton<IImagePreprocessor, AutomationCore.Infrastructure.Matching.OpenCvPreprocessor>();
 
             // Движок сопоставления
             services.AddSingleton<IMatchingEngine, OpenCvMatchingEngine>();
@@ -141,42 +149,9 @@ namespace AutomationCore.Public.Configuration
 
     // Эти классы нужно заменить на реальные реализации
 
-    internal class WgcCaptureDevice : ICaptureDevice
-    {
-        public bool IsSupported => false;
-        public ValueTask<ICaptureDeviceSession> CreateSessionAsync(CaptureRequest request, CancellationToken ct = default)
-            => throw new NotImplementedException("WGC capture device not implemented yet");
-        public void Dispose() { }
-    }
 
-    internal class WindowsInputProvider : IPlatformInputProvider
-    {
-        public Point GetCursorPosition() => throw new NotImplementedException();
-        public void SetCursorPosition(Point position) => throw new NotImplementedException();
-        public void MouseDown(MouseButton button) => throw new NotImplementedException();
-        public void MouseUp(MouseButton button) => throw new NotImplementedException();
-        public void Scroll(int amount, ScrollDirection direction) => throw new NotImplementedException();
-        public void KeyDown(VirtualKey key) => throw new NotImplementedException();
-        public void KeyUp(VirtualKey key) => throw new NotImplementedException();
-        public void SendUnicodeChar(char character) => throw new NotImplementedException();
-    }
 
-    internal class InMemoryTemplateStorage : ITemplateStorage
-    {
-        public event EventHandler<TemplateChangedEventArgs>? TemplateChanged;
-        public ValueTask<bool> ContainsAsync(string key, CancellationToken ct = default) => ValueTask.FromResult(false);
-        public ValueTask<TemplateData> LoadAsync(string key, CancellationToken ct = default) => throw new NotImplementedException();
-        public ValueTask SaveAsync(string key, TemplateData template, CancellationToken ct = default) => throw new NotImplementedException();
-        public ValueTask<bool> DeleteAsync(string key, CancellationToken ct = default) => ValueTask.FromResult(false);
-        public ValueTask<IReadOnlyList<string>> GetKeysAsync(CancellationToken ct = default) => throw new NotImplementedException();
-        public void Dispose() { }
-    }
 
-    internal class OpenCvPreprocessor : IImagePreprocessor
-    {
-        public ValueTask<ProcessedImage> ProcessAsync(ReadOnlyMemory<byte> imageData, int width, int height, int channels, PreprocessingOptions options, CancellationToken ct = default)
-            => throw new NotImplementedException("OpenCV preprocessor not implemented yet");
-    }
 
     internal class OpenCvMatchingEngine : IMatchingEngine
     {

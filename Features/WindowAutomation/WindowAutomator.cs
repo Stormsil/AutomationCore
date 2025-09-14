@@ -83,7 +83,7 @@ namespace AutomationCore.Features.WindowAutomation
                     _logger.LogDebug("Successfully clicked on image {TemplateKey} at {Position} in window '{WindowTitle}' in {Duration}ms",
                         templateKey, searchResult.Location.Center, windowTitle, duration.TotalMilliseconds);
 
-                    return WindowOperationResult.Success(duration, window, searchResult.Location.Center);
+                    return WindowOperationResult.CreateSuccess(duration, window, searchResult.Location.Center);
                 }
                 else
                 {
@@ -138,7 +138,7 @@ namespace AutomationCore.Features.WindowAutomation
                     _logger.LogDebug("Successfully typed {Length} characters in window '{WindowTitle}' in {Duration}ms",
                         text.Length, windowTitle, duration.TotalMilliseconds);
 
-                    return WindowOperationResult.Success(duration, window);
+                    return WindowOperationResult.CreateSuccess(duration, window);
                 }
                 else
                 {
@@ -201,7 +201,7 @@ namespace AutomationCore.Features.WindowAutomation
                     _logger.LogDebug("Successfully waited and clicked on image {TemplateKey} in window '{WindowTitle}' after {Duration}ms",
                         templateKey, windowTitle, totalDuration.TotalMilliseconds);
 
-                    return WindowOperationResult.Success(totalDuration, window, searchResult.Location.Center);
+                    return WindowOperationResult.CreateSuccess(totalDuration, window, searchResult.Location.Center);
                 }
                 else
                 {
@@ -274,7 +274,7 @@ namespace AutomationCore.Features.WindowAutomation
                     _logger.LogDebug("Successfully completed click and type operation in window '{WindowTitle}' in {Duration}ms",
                         windowTitle, duration.TotalMilliseconds);
 
-                    return WindowOperationResult.Success(duration, window, clickResult.ClickPoint);
+                    return WindowOperationResult.CreateSuccess(duration, window, clickResult.ClickPoint);
                 }
                 else
                 {
@@ -319,7 +319,7 @@ namespace AutomationCore.Features.WindowAutomation
                 if (result)
                 {
                     _logger.LogDebug("Successfully closed window '{WindowTitle}' in {Duration}ms", windowTitle, duration.TotalMilliseconds);
-                    return WindowOperationResult.Success(duration, window);
+                    return WindowOperationResult.CreateSuccess(duration, window);
                 }
                 else
                 {
@@ -434,7 +434,7 @@ namespace AutomationCore.Features.WindowAutomation
         public string? ErrorMessage { get; init; }
         public Exception? Exception { get; init; }
 
-        internal static WindowOperationResult Success(TimeSpan duration, WindowInfo window, Point? clickPoint = null)
+        internal static WindowOperationResult CreateSuccess(TimeSpan duration, WindowInfo window, Point? clickPoint = null)
             => new() { Success = true, Duration = duration, Window = window, ClickPoint = clickPoint };
 
         internal static WindowOperationResult Failed(string error, DateTime startTime, Exception? ex = null)

@@ -1,4 +1,4 @@
-﻿using AutomationCore.Input;
+﻿using AutomationCore.Core.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,6 +19,17 @@ namespace AutomationCore.Core.Configuration
             MouseSpeedMultiplier = MouseSpeed,
             EnableMicroMovements = EnableHumanization
         };
+    }
+
+    /// <summary>
+    /// Настройки ввода для внутреннего использования
+    /// </summary>
+    internal sealed class InputSettings
+    {
+        public double MouseSpeedMultiplier { get; set; } = 1.0;
+        public bool EnableMicroMovements { get; set; } = true;
+        public TimeSpan DefaultClickDelay { get; set; } = TimeSpan.FromMilliseconds(50);
+        public TimeSpan DefaultKeyDelay { get; set; } = TimeSpan.FromMilliseconds(50);
     }
 }
 

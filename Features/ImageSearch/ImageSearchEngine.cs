@@ -6,6 +6,9 @@ using System.Threading.Tasks;
 using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Models;
 using Microsoft.Extensions.Logging;
+using MatchOptions = AutomationCore.Core.Models.MatchOptions;
+using ScaleRange = AutomationCore.Core.Models.ScaleRange;
+using PreprocessingOptions = AutomationCore.Core.Models.PreprocessingOptions;
 
 namespace AutomationCore.Features.ImageSearch
 {

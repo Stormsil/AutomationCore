@@ -1,10 +1,11 @@
-﻿using AutomationCore.Assets;
-using AutomationCore.Core.Abstractions;
+﻿using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Services;
+using AutomationCore.Core.Models;
 using Microsoft.Extensions.DependencyInjection;
 using AutomationCore.Core.Capture;
-using AutomationCore.Input;
-using AutomationCore.Core.Matching;
+using AutomationCore.Infrastructure.Input;
+using AutomationCore.Infrastructure.Storage;
+using AutomationCore.Core.Domain.Matching;
 using Microsoft.Extensions.Logging;
 
 
@@ -41,8 +42,8 @@ namespace AutomationCore.Core.Configuration
             var options = new TemplateStoreOptions();
             configure(options);
 
-            _services.AddSingleton<ITemplateStore>(sp =>
-                new FileTemplateStore(new TemplateStoreOptions(), sp.GetService<ILogger<FileTemplateStore>>()));
+            _services.AddSingleton<ITemplateStorage>(sp =>
+                new FileTemplateStorage(options.BasePath));
 
             return this;
         }
@@ -52,7 +53,7 @@ namespace AutomationCore.Core.Configuration
             var options = new InputOptions();
             configure?.Invoke(options);
 
-            _services.AddSingleton<IInputSimulator>(sp => new HumanizedInputSimulator(options));
+            _services.AddSingleton<IInputSimulator, WindowsInputProvider>();
             return this;
         }
 

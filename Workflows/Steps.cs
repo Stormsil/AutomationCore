@@ -3,7 +3,8 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using AutomationCore.Core;
-using AutomationCore.Input;
+using AutomationCore.Core.Models;
+using AutomationCore.Infrastructure.Input;
 
 namespace AutomationCore.Workflows
 {

@@ -1,6 +1,7 @@
 ﻿// Services/Windows/WindowInfoCache.cs
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Models;
 

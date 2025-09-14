@@ -264,7 +264,25 @@ namespace AutomationCore.Services.Windows
                     return null;
                 }
 
-                var info = _platform.BuildWindowInfo(handle);
+                var title = _platform.GetWindowTitle(handle);
+                var className = _platform.GetWindowClassName(handle);
+                var bounds = _platform.GetWindowBounds(handle);
+                var processId = _platform.GetWindowProcessId(handle);
+                var state = _platform.GetWindowState(handle);
+
+                var info = new WindowInfo
+                {
+                    Handle = handle,
+                    Title = title,
+                    ClassName = className,
+                    Bounds = bounds,
+                    ProcessId = processId,
+                    ProcessName = GetProcessName(processId),
+                    IsMinimized = state.HasFlag(WindowState.Minimized),
+                    IsMaximized = state.HasFlag(WindowState.Maximized),
+                    IsVisible = _platform.IsWindowVisible(handle),
+                    IsTopmost = state.HasFlag(WindowState.Topmost)
+                };
 
                 // Кэшируем результат
                 _cache.SetCached(handle, info);
@@ -330,6 +348,20 @@ namespace AutomationCore.Services.Windows
 
             return true;
         }
+
+        private static string GetProcessName(int processId)
+        {
+            try
+            {
+                using var process = System.Diagnostics.Process.GetProcessById(processId);
+                return process.ProcessName;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
 
         #endregion
     }

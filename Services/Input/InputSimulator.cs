@@ -146,7 +146,7 @@ namespace AutomationCore.Services.Input
                 {
                     Type = InputEventType.MouseClick,
                     Position = position,
-                    MouseButton = button,
+                    Button = button,
                     Timestamp = DateTime.UtcNow
                 });
 
