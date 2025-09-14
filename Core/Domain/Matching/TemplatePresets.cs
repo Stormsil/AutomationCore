@@ -1,5 +1,6 @@
 // Core/Models/TemplatePresets.cs
 using AutomationCore.Core.Models;
+using OpenCvSharp;
 
 namespace AutomationCore.Core.Models
 {
@@ -19,7 +20,7 @@ namespace AutomationCore.Core.Models
             ScaleStep = 0.01,
             UseGray = true,
             UseCanny = false,
-            Blur = 3.0
+            Blur = new OpenCvSharp.Size(3, 3)
         };
 
         /// <summary>
@@ -33,7 +34,7 @@ namespace AutomationCore.Core.Models
             ScaleStep = 0.01,
             UseGray = true,
             UseCanny = false,
-            Blur = 1.0
+            Blur = new OpenCvSharp.Size(1, 1)
         };
 
         /// <summary>
@@ -47,7 +48,7 @@ namespace AutomationCore.Core.Models
             ScaleStep = 0.005,
             UseGray = true,
             UseCanny = false,
-            Blur = 5.0
+            Blur = new OpenCvSharp.Size(5, 5)
         };
 
         /// <summary>
@@ -61,7 +62,7 @@ namespace AutomationCore.Core.Models
             ScaleStep = 0.01,
             UseGray = true,
             UseCanny = false,
-            Blur = 2.0
+            Blur = new OpenCvSharp.Size(2, 2)
         };
 
         /// <summary>
@@ -75,7 +76,7 @@ namespace AutomationCore.Core.Models
             ScaleStep = 0.02,
             UseGray = true,
             UseCanny = false,
-            Blur = 3.0
+            Blur = new OpenCvSharp.Size(3, 3)
         };
     }
 }

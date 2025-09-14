@@ -22,9 +22,10 @@ namespace AutomationCore.Infrastructure.Input
 
         public void Dispose()
         {
-            Mouse?.Dispose();
-            Keyboard?.Dispose();
-            Combined?.Dispose();
+            // Input simulators не требуют Dispose
+            // Mouse?.Dispose();
+            // Keyboard?.Dispose();
+            // Combined?.Dispose();
         }
     }
 }

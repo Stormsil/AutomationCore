@@ -40,7 +40,8 @@ namespace AutomationCore.Core.Matching
             throw new NotImplementedException("Screen capture не реализован - нужно использовать DI");
 
             var options = Map(presets);
-            return await FindAsync(templateKey, screen, options);
+            // TODO: получать screen через DI
+            throw new NotImplementedException("Screen capture должен быть внедрен через DI");
         }
 
         public async Task<MatchResult> FindAsync(string templateKey, Mat sourceImage, MatchOptions options = null)
@@ -49,7 +50,7 @@ namespace AutomationCore.Core.Matching
 
             using var templBgr = _templateStore.GetTemplate(templateKey);
             if (templBgr.Empty() || sourceImage.Empty())
-                return null;
+                return MatchResult.NotFound;
 
             // ROI на источнике
             Mat view = sourceImage;
@@ -70,7 +71,7 @@ namespace AutomationCore.Core.Matching
             using var templP = await _preproc.ProcessAsync(templBgr, options.Preprocessing);
 
             var hit = await _engine.FindBestMatchAsync(viewP, templP, options);
-            if (hit is null) return null;
+            if (!hit.IsMatch) return MatchResult.NotFound;
 
             // корректируем координаты в системе экрана
             var bounds = new System.Drawing.Rectangle(
@@ -81,7 +82,7 @@ namespace AutomationCore.Core.Matching
 
             var center = new System.Drawing.Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
 
-            return new MatchResult(bounds, center, hit.Score, hit.Scale, hit.IsHardPass);
+            return new MatchResult(bounds, center, hit.Score, hit.Scale, hit.IsMatch);
         }
 
 
@@ -122,7 +123,7 @@ namespace AutomationCore.Core.Matching
                 Threshold = t?.Threshold ?? 0.90,
                 UseMultiScale = t is { ScaleMin: var a, ScaleMax: var b } && Math.Abs(a - b) > 1e-9,
                 ScaleRange = new ScaleRange(t?.ScaleMin ?? 1.0, t?.ScaleMax ?? 1.0, t?.ScaleStep ?? 0.01),
-                Mode = t?.Mode ?? TemplateMatchModes.CCoeffNormed,
+                Algorithm = t?.Algorithm ?? TemplateMatchModes.CCoeffNormed,
                 Mask = t?.Mask,
                 Preprocessing = new PreprocessingOptions
                 {

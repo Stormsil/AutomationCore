@@ -202,6 +202,20 @@ namespace AutomationCore.Services.Windows
             return bounds.IsEmpty ? null : bounds;
         }
 
+        public async ValueTask<bool> ActivateWindowAsync(WindowHandle handle, CancellationToken ct = default)
+        {
+            _logger.LogDebug("Activating window 0x{Handle:X}", handle.Value);
+
+            await Task.Yield();
+
+            if (!_platform.IsWindow(handle))
+            {
+                return false;
+            }
+
+            return _platform.SetForegroundWindow(handle);
+        }
+
         public async ValueTask<WindowInfo?> WaitForWindowAsync(
             WindowSearchCriteria criteria,
             TimeSpan timeout,

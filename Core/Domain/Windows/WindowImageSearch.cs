@@ -18,6 +18,8 @@ using OpenCvSharp;
 
 using SDPoint = System.Drawing.Point;
 using SDRect = System.Drawing.Rectangle;
+using MatchResultCore = AutomationCore.Core.Models.MatchResult;
+using ESMatchResult = AutomationCore.Core.Domain.Capture.EnhancedScreenCapture.MatchResult;
 
 namespace AutomationCore.Core.Services
 {
@@ -66,13 +68,13 @@ namespace AutomationCore.Core.Services
             // один снимок окна -> Mat
             using var wgc = new EnhancedWindowsGraphicsCapture(_captureSettings);
             await wgc.InitializeAsync(hwnd);
-            using var frame = await wgc.CaptureFrameAsync();
+            var frame = await wgc.GetNextFrameAsync();
             using var mat = EnhancedScreenCapture.ConvertToMat(frame);
 
             var options = MapToMatchOptions(presets ?? TemplatePresets.Universal);
             var hit = await _matcher.FindAsync(templateKey, mat, options);
 
-            if (hit is null) return null;
+            if (!hit.IsMatch) return null;
 
             // Перевод из координат окна в координаты экрана
             if (!GetWindowRect(hwnd, out var wr))
@@ -87,12 +89,12 @@ namespace AutomationCore.Core.Services
             var center = new SDPoint(screenRect.X + screenRect.Width / 2,
                                      screenRect.Y + screenRect.Height / 2);
 
-            return new EnhancedScreenCapture.MatchResult(
+            return new ESMatchResult(
                 screenRect,
                 center,
                 hit.Score,
                 hit.Scale,
-                hit.IsHardPass
+                true
             );
         }
 
@@ -119,7 +121,6 @@ namespace AutomationCore.Core.Services
 
             using var wgc = new EnhancedWindowsGraphicsCapture(_captureSettings);
             await wgc.InitializeAsync(hwnd);
-            wgc.StartCapture();
 
             try
             {
@@ -127,11 +128,11 @@ namespace AutomationCore.Core.Services
                 {
                     ct.ThrowIfCancellationRequested();
 
-                    using var frame = await wgc.GetNextFrameAsync(ct);
+                    var frame = await wgc.GetNextFrameAsync(ct);
                     using var mat = EnhancedScreenCapture.ConvertToMat(frame);
 
                     var hit = await _matcher.FindAsync(templateKey, mat, options);
-                    if (hit is not null && hit.Score >= options.Threshold)
+                    if (hit.IsMatch && hit.Score >= options.Threshold)
                     {
                         if (!GetWindowRect(hwnd, out var wr))
                             return null;
@@ -145,7 +146,7 @@ namespace AutomationCore.Core.Services
                         var center = new SDPoint(screenRect.X + screenRect.Width / 2,
                                                  screenRect.Y + screenRect.Height / 2);
 
-                        return new EnhancedScreenCapture.MatchResult(
+                        return new ESMatchResult(
                             screenRect, center, hit.Score, hit.Scale, true);
                     }
 

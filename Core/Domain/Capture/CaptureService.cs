@@ -34,13 +34,18 @@ namespace AutomationCore.Core.Capture
             _logger.LogInformation("Capturing window: {Title}", windowTitle);
 
             var windows = _windowService.FindWindows(
-                WindowSearchCriteria.WithTitle(windowTitle));
+                AutomationCore.Core.Services.WindowSearchCriteria.WithTitle(windowTitle));
 
             if (windows.Count == 0)
                 throw new WindowNotFoundException($"Window '{windowTitle}' not found");
           
-            var request = CaptureRequest.ForWindow(windows[0].Handle);
-            request.Settings = settings ?? CaptureSettings.Default;
+            var captureOptions = new CaptureOptions
+            {
+                CaptureTimeout = settings?.Timeout ?? TimeSpan.FromSeconds(5),
+                RegionOfInterest = settings?.Region,
+                UseHardwareAcceleration = settings?.UseHardwareAcceleration ?? true
+            };
+            var request = CaptureRequest.ForWindow(windows[0].Handle, captureOptions);
 
 
             using var capture = _captureFactory.CreateCapture();

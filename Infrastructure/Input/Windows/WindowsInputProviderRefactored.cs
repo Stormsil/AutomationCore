@@ -22,10 +22,7 @@ namespace AutomationCore.Infrastructure.Input.Windows
 
         public void Dispose()
         {
-            // Компоненты не требуют явного освобождения ресурсов
-            Mouse?.Dispose();
-            Keyboard?.Dispose();
-            Combined?.Dispose();
+            // Компоненты не требуют явного освобождения ресурсов в текущей реализации
         }
     }
 }

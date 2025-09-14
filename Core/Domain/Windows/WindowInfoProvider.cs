@@ -45,34 +45,48 @@ namespace AutomationCore.Core.Domain.Windows
         {
             if (!IsWindow(hwnd)) return null;
 
-            var info = new WindowInfo { Handle = new WindowHandle(hwnd) };
-
             // Title
+            string title = "";
             int len = GetWindowTextLength(hwnd);
             if (len > 0)
             {
                 var sb = new StringBuilder(len + 1);
                 GetWindowText(hwnd, sb, sb.Capacity);
-                info.Title = sb.ToString();
+                title = sb.ToString();
             }
 
             // Class name
             var className = new StringBuilder(256);
             GetClassName(hwnd, className, className.Capacity);
-            info.ClassName = className.ToString();
+            string classNameStr = className.ToString();
 
             // Bounds
             GetWindowRect(hwnd, out var rect);
-            info.Bounds = new Rectangle(rect.Left, rect.Top, rect.Width, rect.Height);
+            var bounds = new Rectangle(rect.Left, rect.Top, rect.Width, rect.Height);
+
+            // Process ID
+            GetWindowThreadProcessId(hwnd, out uint pid);
 
             // State
             var placement = new WINDOWPLACEMENT();
             placement.length = Marshal.SizeOf(placement);
             GetWindowPlacement(hwnd, ref placement);
 
-            info.IsMinimized = placement.showCmd == SW_MINIMIZE || placement.showCmd == SW_SHOWMINIMIZED;
-            info.IsMaximized = placement.showCmd == SW_MAXIMIZE || placement.showCmd == SW_SHOWMAXIMIZED;
-            info.IsVisible = IsWindowVisible(hwnd);
+            bool isMinimized = placement.showCmd == SW_MINIMIZE || placement.showCmd == SW_SHOWMINIMIZED;
+            bool isMaximized = placement.showCmd == SW_MAXIMIZE || placement.showCmd == SW_SHOWMAXIMIZED;
+            bool isVisible = IsWindowVisible(hwnd);
+
+            var info = new WindowInfo
+            {
+                Handle = new WindowHandle(hwnd),
+                Title = title,
+                ClassName = classNameStr,
+                Bounds = bounds,
+                ProcessId = (int)pid,
+                IsMinimized = isMinimized,
+                IsMaximized = isMaximized,
+                IsVisible = isVisible
+            };
 
             return info;
         }
@@ -106,6 +120,9 @@ namespace AutomationCore.Core.Domain.Windows
 
         [DllImport("user32.dll")]
         private static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
         private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 

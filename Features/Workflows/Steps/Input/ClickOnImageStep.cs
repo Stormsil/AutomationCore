@@ -29,7 +29,7 @@ namespace AutomationCore.Features.Workflows.Steps.Input
             var input = context.GetService<IInputSimulator>();
 
             // Сначала ищем изображение
-            var searchResult = await imageSearch.FindAsync(_templateKey, cancellationToken: ct);
+            var searchResult = await imageSearch.FindAsync(_templateKey, null, ct);
 
             if (!searchResult.Success || searchResult.Location == null)
             {

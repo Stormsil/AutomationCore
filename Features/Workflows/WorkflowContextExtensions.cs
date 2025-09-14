@@ -15,12 +15,8 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public static T GetService<T>(this IWorkflowContext context) where T : notnull
         {
-            if (context is WorkflowBuilder.WorkflowContext workflowContext)
-            {
-                return workflowContext.GetService<T>();
-            }
-
-            throw new InvalidOperationException("Context does not support service resolution");
+            // Temporary workaround - needs proper DI integration
+            throw new NotImplementedException("Service resolution through workflow context needs proper implementation");
         }
     }
 }

@@ -35,7 +35,7 @@ namespace AutomationCore.Infrastructure.Input.Windows
                         return InputResult.Failed(clickResult.Error, "ClickAndType (Click failed)") with { Duration = DateTime.UtcNow - startTime };
 
                 // Небольшая пауза перед вводом
-                var delay = options?.DelayAfterCompletion ?? TimeSpan.FromMilliseconds(100);
+                var delay = options?.BaseDelay ?? TimeSpan.FromMilliseconds(100);
                 if (delay > TimeSpan.Zero)
                     await Task.Delay(delay, ct);
 

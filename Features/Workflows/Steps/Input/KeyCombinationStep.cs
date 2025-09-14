@@ -39,7 +39,7 @@ namespace AutomationCore.Features.Workflows.Steps.Input
             else
             {
                 // Комбинация клавиш
-                var result = await input.Keyboard.PressKeyCombinationAsync(_keys, ct);
+                var result = await input.Keyboard.KeyCombinationAsync(_keys, ct);
                 if (!result.Success)
                 {
                     throw new WorkflowStepException($"Failed to press key combination {string.Join("+", _keys)}: {result.Error?.Message}");

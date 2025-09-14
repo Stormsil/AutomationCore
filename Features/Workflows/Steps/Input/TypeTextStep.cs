@@ -24,7 +24,7 @@ namespace AutomationCore.Features.Workflows.Steps.Input
         public async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken ct = default)
         {
             var input = context.GetService<IInputSimulator>();
-            var result = await input.Keyboard.TypeAsync(_text, cancellationToken: ct);
+            var result = await input.Keyboard.TypeAsync(_text, null, ct);
 
             if (!result.Success)
             {

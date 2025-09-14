@@ -11,6 +11,7 @@ using AutomationCore.Core.Models;
 using AutomationCore.Core.Abstractions;
 using AutomationCore.Infrastructure.Storage;
 using AutomationCore.Infrastructure.Capture;
+using AutomationCore.Core.Domain.Matching;
 using OpenCvSharp;
 
 using SDPoint = System.Drawing.Point;
@@ -37,7 +38,7 @@ namespace AutomationCore.Core.Domain.Capture
         private readonly TemplateMatchOptions _defaultMatchOptions;
 
         // Кэш препроцессинга шаблонов (после Gray/Blur/Canny, до масштабирования)
-        private readonly TemplatePreprocessCache _prepCache = new();
+        private readonly AutomationCore.Core.Domain.Matching.TemplatePreprocessCache _prepCache = new();
 
         // Последние удачные координаты по ключу (для локального ROI)
         private readonly ConcurrentDictionary<string, SDPoint> _lastHits = new();

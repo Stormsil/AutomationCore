@@ -59,7 +59,7 @@ namespace AutomationCore.Core.Matching
             if (sourceP.Empty() || templP.Empty())
                 return Task.FromResult(MatchResult.NotFound);
 
-            var mode = o?.Mode ?? TemplateMatchModes.CCoeffNormed;
+            var mode = o?.Algorithm ?? TemplateMatchModes.CCoeffNormed;
             var mask = o?.Mask;
 
             bool HigherIsBetter = mode != TemplateMatchModes.SqDiff &&

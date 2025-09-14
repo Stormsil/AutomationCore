@@ -98,15 +98,16 @@ namespace AutomationCore.Infrastructure.Capture
             {
                 while (!ct.IsCancellationRequested && IsActive)
                 {
+                    CaptureFrame frame;
                     try
                     {
-                        var frame = await currentTcs.Task.WaitAsync(ct);
-                        yield return frame;
+                        frame = await currentTcs.Task.WaitAsync(ct);
                     }
                     catch (OperationCanceledException)
                     {
                         break;
                     }
+                    yield return frame;
                 }
             }
             finally

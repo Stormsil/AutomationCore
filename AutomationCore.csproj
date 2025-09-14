@@ -10,6 +10,7 @@
 		<!-- Нужен для unsafe-блоков (есть в WindowsGraphicsCapture.cs) -->
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<LangVersion>latest</LangVersion>
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -36,7 +37,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Folder Include="Core\Extensions\" />
 	  <Folder Include="Features\Recording\" />
 	  <Folder Include="Public\Extensions\" />
 	</ItemGroup>
@@ -44,6 +44,10 @@
 	<ItemGroup>
 		<!-- Исключаем старые монолитные файлы из компиляции -->
 		<Compile Remove="**\*_OLD_MONOLITH.cs" />
+		<Compile Remove="Core\Extensions\**" />
+		<EmbeddedResource Remove="Core\Extensions\**" />
+		<None Remove="Core\Extensions\**" />
+		<Page Remove="Core\Extensions\**" />
 	</ItemGroup>
 
 

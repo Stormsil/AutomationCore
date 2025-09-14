@@ -27,11 +27,11 @@ namespace AutomationCore.Features.Workflows.Steps.Window
         public async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken ct = default)
         {
             var windowAutomator = context.GetService<WindowAutomator>();
-            var result = await windowAutomator.ClickOnImageInWindowAsync(_windowTitle, _templateKey, cancellationToken: ct);
+            var result = await windowAutomator.ClickOnImageInWindowAsync(_windowTitle, _templateKey, null, ct);
 
             if (!result.Success)
             {
-                throw new WorkflowStepException($"Failed to click on image '{_templateKey}' in window '{_windowTitle}': {result.Error?.Message}");
+                throw new WorkflowStepException($"Failed to click on image '{_templateKey}' in window '{_windowTitle}': {result.ErrorMessage}");
             }
 
             // Сохраняем результат операции с окном

@@ -46,7 +46,10 @@ namespace AutomationCore.Core.Abstractions
             try
             {
                 var template = _storage.LoadAsync(key).AsTask().Result;
-                return template.Image;
+                // Конвертируем ReadOnlyMemory<byte> в Mat
+                var data = template.Data.ToArray();
+                var mat = Mat.FromArray<byte>(data).Reshape(template.Channels, template.Height);
+                return mat;
             }
             catch
             {

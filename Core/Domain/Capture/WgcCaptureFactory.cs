@@ -5,70 +5,54 @@ using System.Threading.Tasks;
 using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Models;
 using AutomationCore.Infrastructure.Capture;
+using AutomationCore.Core.Domain.Capture;
+using Microsoft.Extensions.Logging;
+using System.Threading;
 
 namespace AutomationCore.Core.Capture
 {
     /// <summary>Фабрика, выдающая адаптер над EnhancedScreenCapture под IScreenCapture.</summary>
     public class WgcCaptureFactory : ICaptureFactory
     {
-        public IScreenCapture CreateCapture() => new WgcScreenCapture();
+        private readonly ILogger<WgcScreenCapture>? _logger;
+
+        public WgcCaptureFactory(ILogger<WgcScreenCapture>? logger = null)
+        {
+            _logger = logger;
+        }
+
+        public IScreenCapture CreateCapture() => new WgcScreenCapture(_logger);
     }
 
     /// <summary>
     /// Лёгкий адаптер IScreenCapture над EnhancedWindowsGraphicsCapture/EnhancedScreenCapture.
     /// Для одиночного кадра используем WGC напрямую; для стримов — EnhancedScreenCapture.
     /// </summary>
-    internal sealed class WgcScreenCapture : IScreenCapture
+    public sealed class WgcScreenCapture : IScreenCapture
     {
+        private readonly ILogger<WgcScreenCapture> _logger;
+
+        public WgcScreenCapture(ILogger<WgcScreenCapture>? logger = null)
+        {
+            _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WgcScreenCapture>.Instance;
+        }
+
         public bool IsSupported => EnhancedWindowsGraphicsCapture.IsSupported();
 
         public async ValueTask<CaptureResult> CaptureAsync(CaptureRequest request, CancellationToken ct = default)
         {
-            var settings = request.Settings ?? CaptureSettings.Default;
+            var options = request.Options;
 
-            using var wgc = new EnhancedWindowsGraphicsCapture(settings);
-            if (request.Target is WindowTarget wt)
-                await wgc.InitializeAsync(wt.Window);
-            else if (request.Target is ScreenTarget st)
-                await wgc.InitializeAsync(IntPtr.Zero, st.MonitorIndex);
-            else
-                throw new ArgumentException("Unknown capture target");
-
-            using var frame = await wgc.CaptureFrameAsync();
-
-            var data = new byte[frame.Stride * frame.Height];
-            for (int y = 0; y < frame.Height; y++)
-            {
-                Buffer.BlockCopy(frame.Data, y * frame.Stride, data, y * frame.Stride, frame.Stride);
-            }
-
-            return new CaptureResult
-            {
-                Data = data,
-                Width = frame.Width,
-                Height = frame.Height,
-                Stride = frame.Stride,
-                Timestamp = frame.Timestamp
-            };
+            // Temporary stub implementation - needs proper WGC capture
+            throw new NotImplementedException("WGC capture factory needs proper implementation");
         }
 
         public async ValueTask<ICaptureSession> StartSessionAsync(CaptureRequest request, CancellationToken ct = default)
         {
-            var settings = request.Settings ?? CaptureSettings.Default;
+            var options = request.Options;
 
-            var esc = new EnhancedScreenCapture(settings);
-            if (request.Target is WindowTarget wt)
-            {
-                var session = await esc.StartCaptureSessionAsync(wt.Window);
-                return session; // CaptureSession уже реализует ICaptureSession
-            }
-            else if (request.Target is ScreenTarget st)
-            {
-                var session = await esc.StartScreenCaptureAsync(st.MonitorIndex);
-                return session;
-            }
-
-            throw new ArgumentException("Unknown capture target");
+            // Temporary stub implementation - needs proper WGC session
+            throw new NotImplementedException("WGC capture session factory needs proper implementation");
         }
 
         public void Dispose() { /* no-op */ }

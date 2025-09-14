@@ -368,7 +368,7 @@ namespace AutomationCore.Core
                 if (Math.Abs(s - 1.0) < 1e-9)
                 {
                     using var result = new Mat();
-                    Cv2.MatchTemplate(viewP, templP, result, o.Mode, mask: o.Mask);
+                    Cv2.MatchTemplate(viewP, templP, result, o.Algorithm, mask: o.Mask);
                     Cv2.MinMaxLoc(result, out var minVal, out var maxVal, out var minLoc, out var maxLoc);
                     double score = o.HigherIsBetter ? maxVal : minVal;
                     bool better = o.HigherIsBetter ? score > bestScore : score < bestScore;
@@ -389,7 +389,7 @@ namespace AutomationCore.Core
                     if (scaled.Cols > viewP.Cols || scaled.Rows > viewP.Rows) continue;
 
                     using var result = new Mat();
-                    Cv2.MatchTemplate(viewP, scaled, result, o.Mode, mask: o.Mask);
+                    Cv2.MatchTemplate(viewP, scaled, result, o.Algorithm, mask: o.Mask);
                     Cv2.MinMaxLoc(result, out var minVal, out var maxVal, out var minLoc, out var maxLoc);
 
                     double score = o.HigherIsBetter ? maxVal : minVal;
@@ -562,7 +562,7 @@ namespace AutomationCore.Core
             using var templP = _prepCache.GetOrCreate(templBgr, o);
 
             using var result = new Mat();
-            Cv2.MatchTemplate(viewP, templP, result, o.Mode, mask: o.Mask);
+            Cv2.MatchTemplate(viewP, templP, result, o.Algorithm, mask: o.Mask);
 
             using var work = result.Clone();
             int tW = templP.Width, tH = templP.Height;

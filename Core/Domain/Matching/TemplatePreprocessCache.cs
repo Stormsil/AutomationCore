@@ -23,7 +23,7 @@ namespace AutomationCore.Core.Domain.Matching
             if (_disposed)
                 throw new ObjectDisposedException(nameof(TemplatePreprocessCache));
 
-            var key = new CacheKey(options.UseGray, options.UseCanny, options.Blur);
+            var key = new CacheKey(options.UseGray, options.UseCanny, options.Blur?.Width ?? 0);
 
             if (_cache.TryGetValue(key, out var cached) && !cached.Empty())
                 return cached.Clone();
@@ -38,9 +38,9 @@ namespace AutomationCore.Core.Domain.Matching
                 current = grayMat;
             }
 
-            if (options.Blur > 0)
+            if (options.Blur?.Width > 0)
             {
-                var blurSize = new OpenCvSharp.Size((int)options.Blur, (int)options.Blur);
+                var blurSize = options.Blur.Value;
                 if (blurSize.Width > 1 || blurSize.Height > 1)
                 {
                     var blurredMat = new Mat();

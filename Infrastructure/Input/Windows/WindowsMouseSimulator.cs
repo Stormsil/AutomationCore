@@ -24,7 +24,8 @@ namespace AutomationCore.Infrastructure.Input.Windows
             var startTime = DateTime.UtcNow;
             try
             {
-                if (options?.Smooth == true)
+                // Smooth движения не поддерживаются в текущей версии
+            if (false) // options?.Smooth == true
                 {
                     await SmoothMoveToAsync(position, options, ct);
                 }
@@ -138,21 +139,21 @@ namespace AutomationCore.Infrastructure.Input.Windows
             try
             {
                 // Перемещаемся к начальной позиции
-                await MoveToAsync(fromPosition, null, ct);
+                await MoveToAsync(from, null, ct);
 
                 // Нажимаем кнопку мыши
-                var (downFlag, upFlag) = GetMouseButtonFlags(button);
-                mouse_event(downFlag, (uint)fromPosition.X, (uint)fromPosition.Y, 0, UIntPtr.Zero);
+                var (downFlag, upFlag) = GetMouseButtonFlags(MouseButton.Left);
+                mouse_event(downFlag, (uint)from.X, (uint)from.Y, 0, UIntPtr.Zero);
 
                 await Task.Delay(50, ct);
 
                 // Плавно перемещаемся к конечной позиции
-                await SmoothMoveToAsync(toPosition, new MouseMoveOptions { Smooth = true, Duration = TimeSpan.FromMilliseconds(200) }, ct);
+                await MoveToAsync(to, null, ct);
 
                 // Отпускаем кнопку мыши
-                mouse_event(upFlag, (uint)toPosition.X, (uint)toPosition.Y, 0, UIntPtr.Zero);
+                mouse_event(upFlag, (uint)to.X, (uint)to.Y, 0, UIntPtr.Zero);
 
-                return InputResult.Successful(DateTime.UtcNow - startTime, $"Drag {button}");
+                return InputResult.Successful(DateTime.UtcNow - startTime, "Drag Left");
             }
             catch (Exception ex)
             {

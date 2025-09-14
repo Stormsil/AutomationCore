@@ -98,14 +98,14 @@ namespace AutomationCore.Core.Models
         {
             UseGray = true,
             UseCanny = false,
-            BlurSize = null
+            Blur = null
         };
 
         public static PreprocessingOptions Accurate => Default with
         {
             UseGray = true,
             UseCanny = false,
-            BlurSize = new(5, 5)
+            Blur = new(5, 5)
         };
     }
 

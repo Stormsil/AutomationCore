@@ -28,6 +28,9 @@ namespace AutomationCore.Core.Abstractions
         /// <summary>Выполняет операцию с окном</summary>
         ValueTask<bool> PerformWindowOperationAsync(WindowHandle handle, WindowOperation operation, CancellationToken ct = default);
 
+        /// <summary>Активирует окно</summary>
+        ValueTask<bool> ActivateWindowAsync(WindowHandle handle, CancellationToken ct = default);
+
         /// <summary>Изменяет границы окна</summary>
         ValueTask<bool> SetWindowBoundsAsync(WindowHandle handle, Rectangle bounds, CancellationToken ct = default);
 

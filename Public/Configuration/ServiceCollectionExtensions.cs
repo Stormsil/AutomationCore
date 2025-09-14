@@ -13,6 +13,8 @@ using AutomationCore.Infrastructure.Storage;
 using AutomationCore.Infrastructure.Matching;
 using AutomationCore.Public.Configuration;
 using AutomationCore.Services.Capture;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using AutomationCore.Services.Input;
 using AutomationCore.Services.Matching;
 using AutomationCore.Services.Windows;
@@ -47,15 +49,7 @@ namespace AutomationCore.Public.Configuration
             services.AddSingleton(options.Matching);
             services.AddSingleton(options.Cache);
 
-            // Добавляем логирование если не настроено
-            services.AddLogging(builder =>
-            {
-                builder.AddConsole();
-                if (options.Logging.EnableVerboseLogging)
-                {
-                    builder.SetMinimumLevel(LogLevel.Trace);
-                }
-            });
+            // Логирование уже настроено через DI
 
             // Регистрируем слои
             services.AddInfrastructureLayer(options);
@@ -76,11 +70,11 @@ namespace AutomationCore.Public.Configuration
             services.AddSingleton<IPlatformWindowOperations, WindowsPlatformService>();
 
             // Устройства захвата (реальные реализации WGC)
-            services.AddTransient<ICaptureDevice, WgcDevice>();
-            services.AddSingleton<ICaptureSessionManager, CaptureSessionManager>();
+            services.AddTransient<AutomationCore.Core.Abstractions.ICaptureDevice, WgcDevice>();
+            services.AddSingleton<AutomationCore.Core.Abstractions.ICaptureSessionManager, Infrastructure.Capture.CaptureSessionManager>();
 
             // Платформенный ввод (реальная реализация)
-            services.AddSingleton<IPlatformInputProvider, Infrastructure.Input.WindowsInputProvider>();
+            services.AddSingleton<IInputSimulator, Infrastructure.Input.WindowsInputProvider>();
 
             // Хранение шаблонов
             services.AddSingleton<ITemplateStorage>(provider =>
@@ -90,7 +84,7 @@ namespace AutomationCore.Public.Configuration
             });
 
             // Препроцессинг изображений
-            services.AddSingleton<IImagePreprocessor, AutomationCore.Infrastructure.Matching.OpenCvPreprocessor>();
+            services.AddSingleton<AutomationCore.Core.Domain.Matching.IPreprocessor, AutomationCore.Infrastructure.Matching.OpenCvPreprocessor>();
 
             // Движок сопоставления
             services.AddSingleton<IMatchingEngine, OpenCvMatchingEngine>();
@@ -139,7 +133,7 @@ namespace AutomationCore.Public.Configuration
             // Высокоуровневые компоненты
             services.AddTransient<ImageSearchEngine>();
             services.AddTransient<WindowAutomator>();
-            services.AddTransient<WorkflowBuilder>();
+            services.AddTransient<AutomationCore.Features.Workflows.WorkflowBuilder>();
 
             return services;
         }

@@ -7,6 +7,7 @@ using AutomationCore.Infrastructure.Input;
 using AutomationCore.Infrastructure.Storage;
 using AutomationCore.Core.Domain.Matching;
 using Microsoft.Extensions.Logging;
+using AutomationCore.Infrastructure.Matching;
 
 
 
@@ -28,10 +29,11 @@ namespace AutomationCore.Core.Configuration
             _services.AddSingleton<ICaptureFactory, WgcCaptureFactory>();
 
             // базовые зависимости для матчера (минимальные рабочие)
-            _services.AddSingleton<IPreprocessor, BasicPreprocessor>();
-            _services.AddSingleton<IMatchingEngine, BasicMatchingEngine>();
-            _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(new Core.Matching.MatchCacheOptions()));
-            _services.AddSingleton<ITemplateMatcherService, TemplateMatcherService>();
+            _services.AddSingleton<AutomationCore.Core.Domain.Matching.IPreprocessor, OpenCvPreprocessor>();
+            _services.AddSingleton<AutomationCore.Core.Domain.Matching.IMatchingEngine, OpenCvMatchingEngine>();
+            _services.AddSingleton<AutomationCore.Core.Abstractions.IMatchCache>(sp =>
+                new MemoryMatchCache(new AutomationCore.Core.Domain.Matching.MatchCacheOptions()));
+            _services.AddSingleton<AutomationCore.Core.Matching.ITemplateMatcherService, AutomationCore.Core.Matching.TemplateMatcherService>();
             _services.AddSingleton<IOverlayService, OverlayService>();
             _services.AddSingleton<WindowImageSearch>();
         }
@@ -58,11 +60,11 @@ namespace AutomationCore.Core.Configuration
         }
 
 
-        public AutomationBuilder WithCaching(Action<AutomationCore.Core.Matching.MatchCacheOptions> configure = null)
+        public AutomationBuilder WithCaching(Action<AutomationCore.Core.Domain.Matching.MatchCacheOptions> configure = null)
         {
-            var options = new AutomationCore.Core.Matching.MatchCacheOptions();
+            var options = new AutomationCore.Core.Domain.Matching.MatchCacheOptions();
             configure?.Invoke(options);
-            _services.AddSingleton<IMatchCache>(sp => new MemoryMatchCache(options));
+            _services.AddSingleton<AutomationCore.Core.Abstractions.IMatchCache>(sp => new MemoryMatchCache(options));
             return this;
         }
 

@@ -32,7 +32,7 @@ namespace AutomationCore.Infrastructure.Capture
             _capture = capture ?? throw new ArgumentNullException(nameof(capture));
             _windowHandle = windowHandle;
             SessionId = Guid.NewGuid().ToString();
-            Target = new CaptureTarget { WindowHandle = new WindowHandle(windowHandle) };
+            Target = new WindowCaptureTarget(new WindowHandle(windowHandle));
 
             // Подключаем события
             _capture.FrameCaptured += OnFrameCaptured;

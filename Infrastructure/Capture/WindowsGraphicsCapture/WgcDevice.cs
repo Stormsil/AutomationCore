@@ -118,16 +118,8 @@ namespace AutomationCore.Infrastructure.Capture.WindowsGraphicsCapture
         {
             try
             {
-                var factory = WinRT.WindowsRuntimeMarshal.GetActivationFactory(typeof(GraphicsCaptureItem));
-                var interop = factory.As<IGraphicsCaptureItemInterop>();
-
-                var hr = interop.CreateForWindow(windowHandle, IID_IInspectable, out var raw);
-                if (hr < 0)
-                    return null;
-
-                var item = MarshalInterface<GraphicsCaptureItem>.FromAbi(raw);
-                Marshal.Release(raw);
-                return item;
+                // TODO: Заменить на правильный способ получения GraphicsCaptureItem
+                throw new NotImplementedException("WinRT.WindowsRuntimeMarshal недоступен - нужна альтернативная реализация");
             }
             catch
             {

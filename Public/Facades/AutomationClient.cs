@@ -6,6 +6,7 @@ using AutomationCore.Core.Configuration;
 using AutomationCore.Features.ImageSearch;
 using AutomationCore.Features.WindowAutomation;
 using AutomationCore.Features.Workflows;
+using AutomationCore.Public.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
@@ -61,9 +62,9 @@ namespace AutomationCore.Public.Facades
         /// <summary>
         /// Создает новый клиент автоматизации с настройками по умолчанию
         /// </summary>
-        public static AutomationClient Create(Action<AutomationOptions>? configure = null)
+        public static AutomationClient Create(Action<AutomationCore.Public.Configuration.AutomationOptions>? configure = null)
         {
-            var options = new AutomationOptions();
+            var options = new AutomationCore.Public.Configuration.AutomationOptions();
             configure?.Invoke(options);
 
             var services = new ServiceCollection();

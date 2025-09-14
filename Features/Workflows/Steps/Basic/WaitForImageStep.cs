@@ -27,7 +27,7 @@ namespace AutomationCore.Features.Workflows.Steps.Basic
         public async ValueTask ExecuteAsync(IWorkflowContext context, CancellationToken ct = default)
         {
             var imageSearch = context.GetService<ImageSearchEngine>();
-            var result = await imageSearch.WaitForAsync(_templateKey, _timeout, cancellationToken: ct);
+            var result = await imageSearch.WaitForAsync(_templateKey, _timeout, null, ct);
 
             if (!result.Success)
             {

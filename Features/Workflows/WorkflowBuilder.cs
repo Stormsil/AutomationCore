@@ -3,7 +3,11 @@ using AutomationCore.Core.Abstractions;
 using AutomationCore.Core.Models;
 using AutomationCore.Features.ImageSearch;
 using AutomationCore.Features.WindowAutomation;
-using AutomationCore.Workflows;
+using AutomationCore.Features.Workflows.Steps.Basic;
+using AutomationCore.Features.Workflows.Steps.Input;
+using AutomationCore.Features.Workflows.Steps.Control;
+using AutomationCore.Features.Workflows.Steps.Custom;
+using AutomationCore.Features.Workflows.Steps.Window;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -20,7 +24,7 @@ namespace AutomationCore.Features.Workflows
         private readonly string _name;
         private readonly IServiceProvider _services;
         private readonly ILogger<WorkflowBuilder> _logger;
-        private readonly List<IWorkflowStep> _steps = new();
+        private readonly List<AutomationCore.Features.Workflows.IWorkflowStep> _steps = new();
 
         public WorkflowBuilder(string name, IServiceProvider services, ILogger<WorkflowBuilder> logger)
         {
@@ -44,7 +48,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder WaitForImage(string templateKey, TimeSpan? timeout = null)
         {
-            var step = new WaitForImageStep(templateKey, timeout ?? TimeSpan.FromSeconds(10));
+            var step = new AutomationCore.Features.Workflows.Steps.Basic.WaitForImageStep(templateKey, timeout ?? TimeSpan.FromSeconds(10));
             _steps.Add(step);
             return this;
         }
@@ -54,7 +58,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder ClickOnImage(string templateKey)
         {
-            var step = new ClickOnImageStep(templateKey);
+            var step = new AutomationCore.Features.Workflows.Steps.Input.ClickOnImageStep(templateKey);
             _steps.Add(step);
             return this;
         }
@@ -64,7 +68,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder Type(string text)
         {
-            var step = new TypeTextStep(text);
+            var step = new AutomationCore.Features.Workflows.Steps.Input.TypeTextStep(text);
             _steps.Add(step);
             return this;
         }
@@ -74,7 +78,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder Delay(TimeSpan delay)
         {
-            var step = new DelayStep(delay);
+            var step = new AutomationCore.Features.Workflows.Steps.Basic.DelayStep(delay);
             _steps.Add(step);
             return this;
         }
@@ -84,7 +88,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder PressKeys(params VirtualKey[] keys)
         {
-            var step = new KeyCombinationStep(keys);
+            var step = new AutomationCore.Features.Workflows.Steps.Input.KeyCombinationStep(keys);
             _steps.Add(step);
             return this;
         }
@@ -98,7 +102,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder ActivateWindow(string windowTitle)
         {
-            var step = new ActivateWindowStep(windowTitle);
+            var step = new AutomationCore.Features.Workflows.Steps.Window.ActivateWindowStep(windowTitle);
             _steps.Add(step);
             return this;
         }
@@ -108,7 +112,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder ClickOnImageInWindow(string windowTitle, string templateKey)
         {
-            var step = new ClickOnImageInWindowStep(windowTitle, templateKey);
+            var step = new AutomationCore.Features.Workflows.Steps.Window.ClickOnImageInWindowStep(windowTitle, templateKey);
             _steps.Add(step);
             return this;
         }
@@ -118,7 +122,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder TypeInWindow(string windowTitle, string text)
         {
-            var step = new TypeInWindowStep(windowTitle, text);
+            var step = new AutomationCore.Features.Workflows.Steps.Window.TypeInWindowStep(windowTitle, text);
             _steps.Add(step);
             return this;
         }
@@ -132,7 +136,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder If(Func<IWorkflowContext, ValueTask<bool>> condition, Action<IWorkflowBuilder> thenSteps)
         {
-            var conditionalStep = new ConditionalStep(condition);
+            var conditionalStep = new AutomationCore.Features.Workflows.Steps.Control.ConditionalStep(condition);
             var nestedBuilder = new WorkflowBuilder($"{_name}_If", _services, _logger);
             thenSteps(nestedBuilder);
             conditionalStep.ThenSteps.AddRange(nestedBuilder._steps);
@@ -145,7 +149,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder Retry(int maxAttempts, Action<IWorkflowBuilder> steps)
         {
-            var retryStep = new RetryStep(maxAttempts);
+            var retryStep = new AutomationCore.Features.Workflows.Steps.Control.RetryStep(maxAttempts);
             var nestedBuilder = new WorkflowBuilder($"{_name}_Retry", _services, _logger);
             steps(nestedBuilder);
             retryStep.Steps.AddRange(nestedBuilder._steps);
@@ -158,7 +162,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder Parallel(Action<IWorkflowBuilder> steps)
         {
-            var parallelStep = new ParallelStep();
+            var parallelStep = new AutomationCore.Features.Workflows.Steps.Control.ParallelStep();
             var nestedBuilder = new WorkflowBuilder($"{_name}_Parallel", _services, _logger);
             steps(nestedBuilder);
             parallelStep.Steps.AddRange(nestedBuilder._steps);
@@ -171,7 +175,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder While(Func<IWorkflowContext, ValueTask<bool>> condition, Action<IWorkflowBuilder> steps)
         {
-            var whileStep = new WhileStep(condition);
+            var whileStep = new AutomationCore.Features.Workflows.Steps.Control.WhileStep(condition);
             var nestedBuilder = new WorkflowBuilder($"{_name}_While", _services, _logger);
             steps(nestedBuilder);
             whileStep.Steps.AddRange(nestedBuilder._steps);
@@ -188,7 +192,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder AddCustomStep(string name, Func<IWorkflowContext, ValueTask> action)
         {
-            var step = new CustomActionStep(name, action);
+            var step = new AutomationCore.Features.Workflows.Steps.Custom.CustomActionStep(action, name);
             _steps.Add(step);
             return this;
         }
@@ -198,7 +202,7 @@ namespace AutomationCore.Features.Workflows
         /// </summary>
         public IWorkflowBuilder AddCustomStep<T>(string name, Func<IWorkflowContext, ValueTask<T>> action, string? storeKey = null)
         {
-            var step = new CustomActionStep<T>(name, action, storeKey);
+            var step = new AutomationCore.Features.Workflows.Steps.Custom.CustomActionStep<T>(action, name);
             _steps.Add(step);
             return this;
         }

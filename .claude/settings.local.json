@@ -7,7 +7,9 @@
       "Bash(find:*)",
       "Bash(tree:*)",
       "Bash(del \"Core\\Domain\\Capture\\ScreenCapture.cs\")",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(timeout:*)",
+      "Bash(dotnet clean:*)"
     ],
     "deny": [],
     "ask": []
